@@ -613,3 +613,10 @@ func (adbClient *AdbClient) Reboot() error {
 	message_parse(adbClient.AdbConn)
 	return nil
 }
+
+func (adbClient *AdbClient) Close() error {
+	if adbClient.AdbConn != nil {
+		adbClient.AdbConn.Close()
+	}
+	return nil
+}
