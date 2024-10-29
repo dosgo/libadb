@@ -368,8 +368,25 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 }
 
 func (adbClient *AdbClient) Pull(path string, dest string) error {
+	file, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	fileStat, err := adbClient.PullStream(path, file)
+	if err != nil {
+		return err
+	}
+	// 设置文件的修改时间
+	os.Chtimes(dest, time.Unix(int64(fileStat.time), 0), time.Unix(int64(fileStat.time), 0))
+	// 设置文件的权限
+	os.Chmod(dest, os.FileMode(fileStat.mode))
+	return nil
+}
+
+func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncMsgStat, error) {
 	if adbClient.AdbConn == nil {
-		return errors.New("not connect")
+		return nil, errors.New("not connect")
 	}
 	adbClient.LocalId++
 	// 打开通道
@@ -409,12 +426,6 @@ func (adbClient *AdbClient) Pull(path string, dest string) error {
 	//fileStat.size = binary.LittleEndian.Uint32(message.payload[8:12])
 	fileStat.time = binary.LittleEndian.Uint32(message.payload[12:16])
 
-	// 设置文件的修改时间
-	os.Chtimes(dest, time.Unix(int64(fileStat.time), 0), time.Unix(int64(fileStat.time), 0))
-
-	// 设置文件的权限
-	os.Chmod(dest, os.FileMode(fileStat.mode))
-
 	// Send OKAY
 	var okay_message = generate_message(A_OKAY, adbClient.LocalId, int32(remoteId), []byte{})
 	adbClient.AdbConn.Write(okay_message)
@@ -430,11 +441,7 @@ func (adbClient *AdbClient) Pull(path string, dest string) error {
 		log.Println("Not OKEY command")
 	}
 
-	file, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	defer dest.Close()
 
 	var fileBuf []byte
 	var recvRun = true
@@ -464,7 +471,7 @@ func (adbClient *AdbClient) Pull(path string, dest string) error {
 
 			datalen := binary.LittleEndian.Uint32(fileBuf[4:])
 			if len(fileBuf) >= int(datalen)+8 {
-				file.Write(fileBuf[8 : 8+datalen])
+				dest.Write(fileBuf[8 : 8+datalen])
 				if len(fileBuf) == int(datalen)+8 {
 					fileBuf = []byte{}
 				} else {
@@ -488,7 +495,7 @@ func (adbClient *AdbClient) Pull(path string, dest string) error {
 	adbClient.AdbConn.Write(clse_message)
 	//read okey
 	message_parse(adbClient.AdbConn)
-	return nil
+	return &fileStat, nil
 }
 
 func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) error {
