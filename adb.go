@@ -393,7 +393,6 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 	var shell_cmd = "sync:"
 	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
 	adbClient.AdbConn.Write(open_message)
-	log.Printf("OPEN Sent\r\n")
 
 	// 读取remoteId
 	message, _ := message_parse(adbClient.AdbConn)
