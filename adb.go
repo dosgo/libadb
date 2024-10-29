@@ -617,6 +617,7 @@ func (adbClient *AdbClient) Reboot() error {
 func (adbClient *AdbClient) Close() error {
 	if adbClient.AdbConn != nil {
 		adbClient.AdbConn.Close()
+		adbClient.AdbConn = nil
 	}
 	return nil
 }
