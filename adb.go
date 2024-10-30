@@ -281,14 +281,14 @@ func (adbClient *AdbClient) Shell(cmd string) ([]byte, error) {
 	// Read OKAY
 	message, _ := message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Println("Not OKAY command")
+		log.Printf("Not OKAY command\r\n")
 		return nil, errors.New("Not OKAY command")
 	}
 
 	// Read WRTE
 	message, _ = message_parse(adbClient.adbConn)
 	if message.command != uint32(A_WRTE) {
-		log.Println("Not WRTE command")
+		log.Printf("Not WRTE command \r\n")
 		return nil, errors.New("Not OKAY command")
 	}
 	message_parse(adbClient.adbConn)
@@ -323,7 +323,7 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	//读取okey
 	message, _ = message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Println("Not OKEY command")
+		log.Printf("Not OKEY command\r\n")
 	}
 	var readDone = true
 	var lists []SyncMsgDent
@@ -401,7 +401,7 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 	// 读取remoteId
 	message, _ := message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Println("Not OKAY command")
+		log.Printf("Not OKAY command\r\n")
 	}
 	remoteId := message.arg0
 
@@ -413,13 +413,13 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 	//读取okey
 	message, _ = message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Println("Not OKEY command")
+		log.Printf("Not OKEY command\r\n")
 	}
 	//fmt.Printf("okey111:%+v\rn", message)
 	// Read WRTE响应 stat
 	message, _ = message_parse(adbClient.adbConn)
 	if message.command != uint32(A_WRTE) {
-		log.Println("Not WRTE command")
+		log.Printf("Not WRTE command\r\n")
 	}
 
 	//fmt.Printf("fileStat msg:%+v\r\n", message.payload)
@@ -441,7 +441,7 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 	//read okey
 	message, _ = message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Println("Not OKEY command")
+		log.Printf("Not OKEY command\r\n")
 	}
 
 	defer dest.Close()
@@ -452,7 +452,7 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 		//read A_write
 		message, _ = message_parse(adbClient.adbConn)
 		if message.command != uint32(A_WRTE) || message.data_length < 1 {
-			log.Println("Not A_WRTE command1111111111")
+			log.Printf("Not A_WRTE command1111111111\r\n")
 			break
 		}
 		fileBuf = append(fileBuf, message.payload...)
@@ -604,14 +604,14 @@ func (adbClient *AdbClient) Reboot() error {
 	// Read OKAY
 	message, _ := message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Println("Not OKAY command")
+		log.Printf("Not OKAY command\r\n")
 		return errors.New("Not OKAY command")
 	}
 
 	// Read WRTE
 	message, _ = message_parse(adbClient.adbConn)
 	if message.command != uint32(A_WRTE) {
-		log.Println("Not WRTE command")
+		log.Printf("Not WRTE command\r\n")
 		return errors.New("Not OKAY command")
 	}
 	// Send OKAY
