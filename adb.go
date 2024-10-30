@@ -161,8 +161,11 @@ func generate_message(command uint32, arg0 uint32, arg1 int32, data []byte) []by
 
 func message_parse(conn net.Conn) (Message, error) {
 	var buffer = make([]byte, ADB_HEADER_LENGTH)
-	io.ReadFull(conn, buffer)
+	_, err := io.ReadFull(conn, buffer)
 	var header Message
+	if err != nil {
+		return header, err
+	}
 	header.command = binary.LittleEndian.Uint32(buffer[:4])
 	header.arg0 = binary.LittleEndian.Uint32(buffer[4:8])
 	header.arg1 = binary.LittleEndian.Uint32(buffer[8:12])
@@ -307,9 +310,10 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	adbClient.adbConn.Write(open_message)
 
 	// Read OKAY
-	message, _ := message_parse(adbClient.adbConn)
+	message, err := message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Println(" Ls Not OKAY command:%d", message.command)
+		log.Printf("Ls Not OKAY command:%d\r\n", message.command)
+		return nil, err
 	}
 	remoteId := int32(message.arg0)
 	list_message := generate_sync_message([]byte("LIST"), uint32(len(path)))
@@ -422,7 +426,7 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 	fileStat := SyncMsgStat{}
 
 	fileStat.mode = binary.LittleEndian.Uint32(message.payload[4:8])
-	//fileStat.size = binary.LittleEndian.Uint32(message.payload[8:12])
+	fileStat.size = binary.LittleEndian.Uint32(message.payload[8:12])
 	fileStat.time = binary.LittleEndian.Uint32(message.payload[12:16])
 
 	// Send OKAY
@@ -470,7 +474,10 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 
 			datalen := binary.LittleEndian.Uint32(fileBuf[4:])
 			if len(fileBuf) >= int(datalen)+8 {
-				dest.Write(fileBuf[8 : 8+datalen])
+				_, err := dest.Write(fileBuf[8 : 8+datalen])
+				if err != nil {
+					log.Printf("dest write err:%+v\r\n", err)
+				}
 				if len(fileBuf) == int(datalen)+8 {
 					fileBuf = []byte{}
 				} else {
