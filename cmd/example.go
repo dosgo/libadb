@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -14,14 +15,14 @@ func main() {
 	var adbClient = libadb.AdbClient{CertFile: "adbkey.pub", KeyFile: "adbkey.key", PeerName: "test"}
 
 	// Scan intranet connections
-	/*
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
-		defer cancel()
-		adbClient.ScanConnect(ctx)
 
-		//scan pair  //adb pair
-		adbClient.ScanPair(ctx, 586479)
-	*/
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	defer cancel()
+	adbClient.ScanConnect(ctx)
+
+	//scan pair  //adb pair
+	adbClient.ScanPair(ctx, 586479)
+
 	// Manual connection
 	adbClient.Connect("172.30.16.133:44645")
 	//Shell Commands

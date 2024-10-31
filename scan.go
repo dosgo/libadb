@@ -11,35 +11,46 @@ var SERVICE_TYPE_ADB = "adb"
 var SERVICE_TYPE_TLS_PAIRING = "adb-tls-pairing"
 var SERVICE_TYPE_TLS_CONNECT = "adb-tls-connect"
 
-func (adbClient *AdbClient) scanAddr(ctx context.Context, code int) error {
+func scanAddr(ctx context.Context, action int) ([]string, error) {
 	resolver, err := zeroconf.NewResolver(nil)
+	var addrs []string
 	if err != nil {
-		return err
+		return nil, err
 	}
 	entries := make(chan *zeroconf.ServiceEntry)
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		for entry := range results {
-			if code == 0 {
-				adbClient.Connect(fmt.Sprintf("%s:%d", entry.AddrIPv4, entry.Port))
+			if action == 1 {
+				addrs = append(addrs, fmt.Sprintf("%s:%d", entry.AddrIPv4, entry.Port))
 			} else {
-				adbClient.Pair(fmt.Sprintf("%d", code), fmt.Sprintf("%s:%d", entry.AddrIPv4, entry.Port))
 				fmt.Printf("pair addr:%s:%d\r\n", entry.AddrIPv4, entry.Port)
+				addrs = append(addrs, fmt.Sprintf("%s:%d", entry.AddrIPv4, entry.Port))
 			}
 		}
 	}(entries)
-	if code == 0 {
+	if action == 0 {
 		resolver.Browse(ctx, fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_CONNECT), "local.", entries)
 	} else {
 		resolver.Browse(ctx, fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_PAIRING), "local.", entries)
 	}
-	return nil
+	return addrs, nil
 }
 
 func (adbClient *AdbClient) ScanConnect(ctx context.Context) error {
-	adbClient.scanAddr(ctx, 0)
-	return nil
+	addrs, err := scanAddr(ctx, 1)
+	if err != nil {
+		return err
+	}
+	return adbClient.Connect(addrs[0])
 }
 func (adbClient *AdbClient) ScanPair(ctx context.Context, code int) error {
-	adbClient.scanAddr(ctx, code)
-	return nil
+	addrs, err := scanAddr(ctx, 2)
+	if err != nil {
+		return err
+	}
+	return adbClient.Pair(fmt.Sprintf("%d", code), addrs[0])
+}
+
+func ScanAddrs(ctx context.Context, action int) ([]string, error) {
+	return scanAddr(ctx, action)
 }
