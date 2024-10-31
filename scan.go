@@ -2,6 +2,7 @@ package libadb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/grandcat/zeroconf"
@@ -41,12 +42,18 @@ func (adbClient *AdbClient) ScanConnect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(addrs) == 0 {
+		return errors.New("not find addr")
+	}
 	return adbClient.Connect(addrs[0])
 }
 func (adbClient *AdbClient) ScanPair(ctx context.Context, code int) error {
 	addrs, err := scanAddr(ctx, 2)
 	if err != nil {
 		return err
+	}
+	if len(addrs) == 0 {
+		return errors.New("not find addr")
 	}
 	return adbClient.Pair(fmt.Sprintf("%d", code), addrs[0])
 }
