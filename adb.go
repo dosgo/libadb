@@ -188,7 +188,12 @@ func generate_sync_message(id []byte, len uint32) []byte {
 }
 
 func (adbClient *AdbClient) Connect(addr string) error {
-
+	if !fileExists(adbClient.CertFile) || !fileExists(adbClient.KeyFile) {
+		err := generateCert(adbClient.CertFile, adbClient.KeyFile, adbClient.PeerName)
+		if err != nil {
+			return err
+		}
+	}
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
