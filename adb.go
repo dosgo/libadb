@@ -3,14 +3,16 @@ package libadb
 import (
 	"bufio"
 	"bytes"
+	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"math/big"
 	"net"
 	"os"
 	"time"
@@ -48,7 +50,6 @@ const A_STLS_VERSION uint32 = 0x01000000
 
 const ADB_AUTH_TOKEN uint32 = 1
 const ADB_AUTH_SIGNATURE uint32 = 2
-
 const ADB_AUTH_RSAPUBLICKEY = 3
 
 type Message struct {
@@ -206,9 +207,14 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		[]byte(SYSTEM_IDENTITY_STRING_HOST),
 	)
 	conn.Write(cnxn_message)
-
 	// Read STLS command
 	var message, _ = message_parse(conn)
+	if message.command == A_CNXN {
+		fmt.Printf("No auth required\r\n")
+		adbClient.adbConn = conn
+		return nil
+	}
+
 	//tls auth
 	if message.command == A_STLS {
 		// Send STLS packet
@@ -252,25 +258,61 @@ func (adbClient *AdbClient) Connect(addr string) error {
 			fmt.Printf("certificates error err:%+v\r\n", err)
 			return err
 		}
-
 		privateKey, ok := certificates.PrivateKey.(*rsa.PrivateKey)
 		if !ok {
 			fmt.Printf("certificates error err:%+v\r\n", err)
 			return err
 		}
-		c := new(big.Int).SetBytes(message.payload)
-		signByte := c.Exp(c, privateKey.D, privateKey.N).Bytes()
-		var sign_message = generate_message(A_AUTH, ADB_AUTH_SIGNATURE, 0, signByte)
+		//c := new(big.Int).SetBytes(message.payload)
+		//	signByte := c.Exp(c, privateKey.D, privateKey.N).Bytes()
+		//signByte = []byte{65, 7, 7, 7, 8, 8, 8, 8, 6, 9, 9, 9, 9, 9, 9, 9, 9, 99, 9}
+		//
+		hash := sha1.Sum(message.payload)
+		//c := new(big.Int).SetBytes(hash[:])
+		//signByte := c.Exp(c, privateKey.D, privateKey.N).Bytes()
+		// 使用私钥生成 RSA 签名
+
+		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, hash[:])
+		if err != nil {
+			log.Printf("err:%+v\r\n", err)
+			return nil
+		}
+		//	fmt.Printf("signaturelen:%d\r\n", len(signature))
+		var sign_message = generate_message(A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
 		conn.Write(sign_message)
 
-		pubKeyByte := adbClient.genPeerInfo(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
-		var auth_message = generate_message(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, pubKeyByte)
-		conn.Write(auth_message)
-
+		message, _ = message_parse(conn)
+		//fmt.Printf("message00:%+v\r\n", message)
+		if message.command == A_AUTH {
+			pubKeyByte := adbClient.genPeerInfo(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
+			var auth_message = generate_message(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, pubKeyByte)
+			conn.Write(auth_message)
+		}
 	}
 	message, _ = message_parse(conn)
 	adbClient.adbConn = conn
 	return nil
+}
+
+// adbAuthSign 函数等价于C代码中的adb_auth_sign函数
+func adbAuthSign(privateKey *rsa.PrivateKey, token []byte) (int, []byte) {
+	if len(token) != 20 {
+		fmt.Printf("Unexpected token size %d\n", len(token))
+		return 0, nil
+	}
+
+	// 计算 token 的 SHA-1 哈希值
+	hash := sha1.Sum(token)
+
+	// 使用私钥生成 RSA 签名
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, hash[:])
+	if err != nil {
+		fmt.Printf("Failed to sign token: %v\n", err)
+		return 0, nil
+	}
+
+	fmt.Printf("adb_auth_sign len=%d\n", len(signature))
+	return len(signature), signature
 }
 
 func (adbClient *AdbClient) Shell(cmd string) ([]byte, error) {
