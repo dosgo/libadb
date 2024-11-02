@@ -266,10 +266,8 @@ func (adbClient *AdbClient) Connect(addr string) error {
 
 		//
 		hash := sha1.Sum(message.payload)
-		//c := new(big.Int).SetBytes(hash[:])
-		//signByte := c.Exp(c, privateKey.D, privateKey.N).Bytes()
-		// 使用私钥生成 RSA 签名
 
+		// 使用私钥生成 RSA 签名
 		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, hash[:])
 		if err != nil {
 			log.Printf("err:%+v\r\n", err)
@@ -660,52 +658,3 @@ func (adbClient *AdbClient) IsConnect() bool {
 	}
 	return false
 }
-
-/*
-fun adbEncode(key: PublicKey): ByteArray {
-        if (key !is RSAPublicKey) throw IllegalArgumentException("PublicKey is not RSAPublicKey.")
-
-        val modulesSize = 2048 / 8
-        val moduleSizeWords = modulesSize / 4
-
-        // 2^32
-        val r32 = BigInteger.ZERO.setBit(32)
-
-        // -1 / N[0] mod 2^32
-        val n0inv = r32.subtract(
-                key.modulus.remainder(r32).modInverse(r32)).toInt()
-
-        val modules = key.modulus
-                .toByteArray().reversedArray()
-
-        // (2^(rsa_size)) ^ 2 mod N
-        val rr = BigInteger.ZERO.setBit(modulesSize * 8)
-                .modPow(BigInteger.valueOf(2), key.modulus)
-                .toByteArray().reversedArray()
-
-        val exponent = key.publicExponent.toInt()
-
-        val encodedPubKey = ByteArray(4 * 3 + modulesSize * 2).apply {
-            ByteBuffer.wrap(this).run {
-                order(ByteOrder.LITTLE_ENDIAN)
-                putInt(moduleSizeWords)
-                putInt(n0inv)
-                if (modules.size < modulesSize) {
-                    put(modules)
-                    put(ByteArray(modulesSize - modules.size)) // 桁が不足する場合は 0 で埋める
-                } else {
-                    put(modules, 0, modulesSize) // 符号の桁は除く
-                }
-                if (rr.size < modulesSize) {
-                    put(rr)
-                    put(ByteArray(modulesSize - rr.size)) // 桁が不足する場合は 0 で埋める
-                } else {
-                    put(rr, 0, modulesSize) // 符号の桁は除く
-                }
-                putInt(exponent)
-            }
-        }
-
-        return encodedPubKey
-    }
-*/
