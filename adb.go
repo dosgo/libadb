@@ -6,7 +6,6 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
@@ -270,28 +269,16 @@ func (adbClient *AdbClient) Connect(addr string) error {
 			return err
 		}
 
-		fmt.Printf("payload:%s\r\n", message.payload)
-		//
-		hash := sha1.Sum(message.payload)
-
-		fmt.Printf("hashlen:%d\r\n", len(hash))
 		// 使用私钥生成 RSA 签名
-		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, hash[:])
+		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, message.payload)
 		if err != nil {
 			log.Printf("err:%+v\r\n", err)
 			return nil
 		}
-		signaturebase := signature
-		fmt.Printf("signaturebase:%s\r\n", signaturebase)
-		//fmt.Printf("signaturelen:%d\r\n", len(signature))
-		var sign_message = generate_message(A_AUTH, ADB_AUTH_SIGNATURE, 0, []byte(signaturebase))
+
+		var sign_message = generate_message(A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
 		conn.Write(sign_message)
-		printHex("sign_message:", sign_message)
-
 		message, _ = message_parse(conn)
-		log.Printf("msg1:%+v\r\n", message)
-
-		//fmt.Printf("message00:%+v\r\n", message)
 		if message.command == A_AUTH && message.arg0 == ADB_AUTH_TOKEN {
 			publicKeybyte, _ := encodeRSAPublicKey(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
 			pubKeyByte := base64.StdEncoding.EncodeToString(publicKeybyte)
