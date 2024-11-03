@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -19,7 +20,7 @@ import (
 )
 
 const ADB_HEADER_LENGTH = 24
-const SYSTEM_IDENTITY_STRING_HOST = "host::\x00"
+const SYSTEM_IDENTITY_STRING_HOST = "host::features=shell_v2,cmd,stat_v2,ls_v2,fixed_push_mkdir,apex,abb,fixed_push_symlink_timestamp,abb_exec,remount_shell,track_app,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd,sendrecv_v2_dry_run_send,openscreen_mdns"
 const A_CNXN uint32 = 0x4e584e43
 const A_OPEN uint32 = 0x4e45504f
 const A_OKAY uint32 = 0x59414b4f
@@ -50,7 +51,7 @@ const A_STLS_VERSION uint32 = 0x01000000
 
 const ADB_AUTH_TOKEN uint32 = 1
 const ADB_AUTH_SIGNATURE uint32 = 2
-const ADB_AUTH_RSAPUBLICKEY = 3
+const ADB_AUTH_RSAPUBLICKEY uint32 = 3
 
 type Message struct {
 	command     uint32
@@ -207,7 +208,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		[]byte(SYSTEM_IDENTITY_STRING_HOST),
 	)
 	conn.Write(cnxn_message)
-	// Read STLS command
+	// Read Auth command
 	var message, _ = message_parse(conn)
 	if message.command == A_CNXN {
 		fmt.Printf("No auth required\r\n")
@@ -215,7 +216,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		return nil
 	}
 
-	//tls auth
+	//tls auth android 11+
 	if message.command == A_STLS {
 		// Send STLS packet
 		var stls_message = generate_message(A_STLS, A_STLS_VERSION, 0, []byte{})
@@ -244,9 +245,14 @@ func (adbClient *AdbClient) Connect(addr string) error {
 
 		// 设置密钥对
 		conn = tls.Client(conn, &tlsConfig)
-
+		message, _ = message_parse(conn)
+		//连接成功
+		if message.command == A_CNXN {
+			adbClient.adbConn = conn
+			return nil
+		}
 	}
-	log.Printf("msg:%+v\r\n", message)
+	//android 10
 	if message.command == A_AUTH {
 
 		if message.arg0 != ADB_AUTH_TOKEN {
@@ -264,32 +270,49 @@ func (adbClient *AdbClient) Connect(addr string) error {
 			return err
 		}
 
+		fmt.Printf("payload:%s\r\n", message.payload)
 		//
 		hash := sha1.Sum(message.payload)
 
+		fmt.Printf("hashlen:%d\r\n", len(hash))
 		// 使用私钥生成 RSA 签名
 		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, hash[:])
 		if err != nil {
 			log.Printf("err:%+v\r\n", err)
 			return nil
 		}
-		fmt.Printf("signaturelen:%d\r\n", len(signature))
-		var sign_message = generate_message(A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
+		signaturebase := signature
+		fmt.Printf("signaturebase:%s\r\n", signaturebase)
+		//fmt.Printf("signaturelen:%d\r\n", len(signature))
+		var sign_message = generate_message(A_AUTH, ADB_AUTH_SIGNATURE, 0, []byte(signaturebase))
 		conn.Write(sign_message)
+		printHex("sign_message:", sign_message)
 
 		message, _ = message_parse(conn)
 		log.Printf("msg1:%+v\r\n", message)
+
 		//fmt.Printf("message00:%+v\r\n", message)
-		if message.command == A_AUTH {
-			fmt.Printf("send cear\r\n")
-			pubKeyByte, _ := encodeRSAPublicKey(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
-			var auth_message = generate_message(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, pubKeyByte)
+		if message.command == A_AUTH && message.arg0 == ADB_AUTH_TOKEN {
+			publicKeybyte, _ := encodeRSAPublicKey(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
+			pubKeyByte := base64.StdEncoding.EncodeToString(publicKeybyte)
+			var auth_message = generate_message(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, []byte(pubKeyByte))
 			conn.Write(auth_message)
 		}
+		//连接成功
+		if message.command == A_CNXN {
+			adbClient.adbConn = conn
+			return nil
+		}
 	}
-	message, _ = message_parse(conn)
-	adbClient.adbConn = conn
-	return nil
+	return errors.New("auth error")
+}
+
+func printHex(key string, data []byte) {
+	fmt.Println(key)
+	for _, b := range data {
+		fmt.Printf("%02X ", b)
+	}
+	fmt.Println() // 换行
 }
 
 func (adbClient *AdbClient) Shell(cmd string) ([]byte, error) {
