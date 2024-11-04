@@ -1,8 +1,10 @@
 package libadb
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -38,7 +40,7 @@ func convertRGB16ToImage(data []byte, width, height int) *image.RGBA {
 	}
 	return img
 }
-func convertBGRA_8888ToImage(bgraData []byte, width, height int) *image.RGBA {
+func convertBGRA8888ToImage(bgraData []byte, width, height int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	dataLen := len(bgraData)
 	// 填充 image.RGBA 对象
@@ -88,7 +90,7 @@ func convertRGBA888ToImage(rgbaData []byte, width, height int) *image.RGBA {
 	return img
 }
 
-func convertRGBX_8888ToImage(rgbxData []byte, width, height int) *image.RGBA {
+func convertRGBX8888ToImage(rgbxData []byte, width, height int) *image.RGBA {
 	// 创建一个 image.RGBA 对象
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	dataLen := len(rgbxData)
@@ -110,7 +112,7 @@ func convertRGBX_8888ToImage(rgbxData []byte, width, height int) *image.RGBA {
 	}
 	return img
 }
-func convertRGB_888ToImage(rgbData []byte, width, height int) *image.RGBA {
+func convertRGB888ToImage(rgbData []byte, width, height int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	dataLen := len(rgbData)
 	// 填充 image.RGBA 对象
@@ -132,13 +134,24 @@ func convertRGB_888ToImage(rgbData []byte, width, height int) *image.RGBA {
 	}
 	return img
 }
-func (adbClient *AdbClient) Screencap() (*image.RGBA, error) {
+func (adbClient *AdbClient) Screencap() (image.Image, error) {
+	bin, err := adbClient.ShellParam("screencap -p", true)
+	if err != nil {
+		return nil, err
+	}
+	var buffer bytes.Buffer
+	buffer.Write([]byte(bin))
+	img, err := png.Decode(&buffer)
+	return img, err
+}
+
+func (adbClient *AdbClient) Screencapv1() (image.Image, error) {
 	if adbClient.adbConn == nil {
 		return nil, errors.New("not connect")
 	}
 	adbClient.LocalId++
 	// Send OPEN
-	var shell_cmd = "framebuffer:"
+	var shell_cmd = "framebuffer:\x00"
 	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
@@ -174,7 +187,7 @@ func (adbClient *AdbClient) Screencap() (*image.RGBA, error) {
 
 	//read head
 	version := binary.LittleEndian.Uint32(fBuf[:4])
-	var f Framebuffer_headV1
+	var f Framebuffer_head
 	var imgBuf []byte
 	if version == 1 {
 		imgBuf = message.payload[52:]
@@ -183,7 +196,15 @@ func (adbClient *AdbClient) Screencap() (*image.RGBA, error) {
 		f.width = binary.LittleEndian.Uint32(fBuf[12:16])
 		f.height = binary.LittleEndian.Uint32(fBuf[16:20])
 		f.red_offset = binary.LittleEndian.Uint32(fBuf[20:24])
+		f.red_length = binary.LittleEndian.Uint32(fBuf[24:28])
+		f.blue_offset = binary.LittleEndian.Uint32(fBuf[28:32])
+		f.blue_length = binary.LittleEndian.Uint32(fBuf[32:36])
+		f.green_offset = binary.LittleEndian.Uint32(fBuf[36:40])
+		f.green_length = binary.LittleEndian.Uint32(fBuf[40:44])
+		f.alpha_offset = binary.LittleEndian.Uint32(fBuf[44:48])
 		f.alpha_length = binary.LittleEndian.Uint32(fBuf[48:52])
+
+		fmt.Printf("version1\r\n")
 	}
 	if version == 2 {
 		imgBuf = fBuf[56:]
@@ -192,37 +213,71 @@ func (adbClient *AdbClient) Screencap() (*image.RGBA, error) {
 		f.width = binary.LittleEndian.Uint32(fBuf[16:20])
 		f.height = binary.LittleEndian.Uint32(fBuf[20:24])
 		f.red_offset = binary.LittleEndian.Uint32(fBuf[24:28])
+		f.red_length = binary.LittleEndian.Uint32(fBuf[28:32])
+		f.blue_offset = binary.LittleEndian.Uint32(fBuf[32:36])
+		f.blue_length = binary.LittleEndian.Uint32(fBuf[36:40])
+		f.green_offset = binary.LittleEndian.Uint32(fBuf[40:44])
+		f.green_length = binary.LittleEndian.Uint32(fBuf[44:48])
+		f.alpha_offset = binary.LittleEndian.Uint32(fBuf[48:53])
 		f.alpha_length = binary.LittleEndian.Uint32(fBuf[52:56])
+
 	}
 	var img *image.RGBA
+
 	if f.bpp == 16 {
+		log.Printf("RGB_565\r\n")
 		//RGB_565
 		img = convertRGB16ToImage(imgBuf, int(f.width), int(f.height))
 		return img, nil
 	} else if f.bpp == 24 {
+		log.Printf("RGB_888\r\n")
 		//RGB_888
-		img = convertRGB_888ToImage(imgBuf, int(f.width), int(f.height))
+		img = convertRGB888ToImage(imgBuf, int(f.width), int(f.height))
 		return img, nil
 	} else if f.bpp == 32 {
+
 		//BGRA_8888
 		if f.red_offset == 16 {
-
-			img = convertBGRA_8888ToImage(imgBuf, int(f.width), int(f.height))
+			log.Printf("BGRA_8888\r\n")
+			img = convertBGRA8888ToImage(imgBuf, int(f.width), int(f.height))
 			return img, nil
 		}
 
 		if f.red_offset == 0 {
 			//RGBX_8888
 			if f.alpha_length == 0 {
-				img = convertRGBX_8888ToImage(imgBuf, int(f.width), int(f.height))
+				log.Printf("RGBX_8888\r\n")
+				img = convertRGBX8888ToImage(imgBuf, int(f.width), int(f.height))
 				return img, nil
 			}
 			// RGBA_8888
 			if f.alpha_length == 8 {
+				log.Printf("RGBA_8888\r\n")
 				img = convertRGBA888ToImage(imgBuf, int(f.width), int(f.height))
 				return img, nil
 			}
 		}
 	}
 	return nil, errors.New("error")
+}
+
+func convertARGB8888ToImage(rgbaData []byte, width int, height int) *image.RGBA {
+	// 创建一个新的 RGBA 图像
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	// 遍历 ARGB_8888 数据并设置像素
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			// 计算当前像素在数据中的位置
+			offset := (y*width + x) * 4
+			alpha := rgbaData[offset]
+			red := rgbaData[offset+1]
+			green := rgbaData[offset+2]
+			blue := rgbaData[offset+3]
+
+			// 设置像素
+			img.Set(x, y, color.RGBA{R: red, G: green, B: blue, A: alpha})
+		}
+	}
+	return img
 }
