@@ -90,7 +90,7 @@ type AdbClient struct {
 	LocalId  uint32
 }
 
-type Framebuffer_headV1 struct {
+type Framebuffer_head struct {
 	version      uint32
 	bpp          uint32
 	size         uint32
@@ -268,7 +268,6 @@ func (adbClient *AdbClient) Connect(addr string) error {
 			fmt.Printf("certificates error err:%+v\r\n", err)
 			return err
 		}
-
 		// 使用私钥生成 RSA 签名
 		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, message.payload)
 		if err != nil {
@@ -282,8 +281,10 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		if message.command == A_AUTH && message.arg0 == ADB_AUTH_TOKEN {
 			publicKeybyte, _ := encodeRSAPublicKey(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
 			pubKeyByte := base64.StdEncoding.EncodeToString(publicKeybyte)
+			pubKeyByte = pubKeyByte + " " + adbClient.PeerName + "\x00"
 			var auth_message = generate_message(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, []byte(pubKeyByte))
 			conn.Write(auth_message)
+			message, _ = message_parse(conn)
 		}
 		//连接成功
 		if message.command == A_CNXN {
@@ -302,9 +303,9 @@ func printHex(key string, data []byte) {
 	fmt.Println() // 换行
 }
 
-func (adbClient *AdbClient) Shell(cmd string) ([]byte, error) {
+func (adbClient *AdbClient) Shell(cmd string) (string, error) {
 	if adbClient.adbConn == nil {
-		return nil, errors.New("not connect")
+		return "", errors.New("not connect")
 	}
 	adbClient.LocalId++
 	// Send OPEN
@@ -316,21 +317,21 @@ func (adbClient *AdbClient) Shell(cmd string) ([]byte, error) {
 	message, _ := message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKAY command\r\n")
-		return nil, errors.New("Not OKAY command")
+		return "", errors.New("Not OKAY command")
 	}
 
 	// Read WRTE
-	message, _ = message_parse(adbClient.adbConn)
-	if message.command != uint32(A_WRTE) {
-		log.Printf("Not WRTE command \r\n")
-		return nil, errors.New("Not OKAY command")
+	var out = ""
+	for {
+		adbClient.adbConn.SetReadDeadline(time.Now().Add(time.Second * 35))
+		message, _ = message_parse(adbClient.adbConn)
+		if message.command != uint32(A_WRTE) {
+			break
+		}
+		out = out + string(message.payload)
 	}
-	message_parse(adbClient.adbConn)
-	// Send OKAY
-	var okay_message = generate_message(A_OKAY, adbClient.LocalId, int32(message.arg1), []byte{})
-	adbClient.adbConn.Write(okay_message)
-	message_parse(adbClient.adbConn)
-	return message.payload, nil
+
+	return out, nil
 }
 
 func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
@@ -339,7 +340,7 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	}
 	adbClient.LocalId++
 	// Send OPEN
-	var shell_cmd = "sync:"
+	var shell_cmd = "sync:\x00"
 	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
@@ -422,13 +423,13 @@ func (adbClient *AdbClient) Pull(path string, dest string) error {
 	return nil
 }
 
-func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncMsgStat, error) {
+func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgStat, error) {
 	if adbClient.adbConn == nil {
 		return nil, errors.New("not connect")
 	}
 	adbClient.LocalId++
 	// 打开通道
-	var shell_cmd = "sync:"
+	var shell_cmd = "sync:\x00"
 	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
@@ -477,8 +478,6 @@ func (adbClient *AdbClient) PullStream(path string, dest io.WriteCloser) (*SyncM
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKEY command\r\n")
 	}
-
-	defer dest.Close()
 
 	var fileBuf []byte
 	var recvRun = true
@@ -544,7 +543,7 @@ func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) 
 	}
 	adbClient.LocalId++
 	// 打开通道
-	var shell_cmd = "sync:"
+	var shell_cmd = "sync:\x00"
 	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
@@ -631,7 +630,7 @@ func (adbClient *AdbClient) Reboot() error {
 	}
 	adbClient.LocalId++
 	// Send OPEN
-	var shell_cmd = "reboot:"
+	var shell_cmd = "reboot:\x00"
 	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
