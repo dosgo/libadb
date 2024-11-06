@@ -18,12 +18,11 @@ func main() {
 	out, _ := adbClient.Shell("pm list packages")
 	fmt.Printf("11%+s", out)
 
-	err := adbClient.Pull("/storage/emulated/0/Download/中国国家铁路集团有限公司2022年年度报告.pdf", "test.pdf")
-	fmt.Printf("pull err:%+v", err)
 	lists, _ := adbClient.Ls("/storage/emulated/0/Download")
 	for _, value := range lists {
 		log.Printf("file:%+v %s\r\n", value.Name, time.Unix(int64(value.Time), 0).Format("2006-01-02 15:04:05"))
 	}
-
+	err := adbClient.Pull("/storage/emulated/0/Download/中国国家铁路集团有限公司2022年年度报告.pdf", "test.pdf")
+	fmt.Printf("pull err:%+v", err)
 	//fmt.Scanln()
 }

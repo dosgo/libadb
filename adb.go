@@ -411,7 +411,10 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 		var okay_message = generate_message(A_OKAY, adbClient.LocalId, remoteId, []byte{})
 		adbClient.adbConn.Write(okay_message)
 	}
-
+	//send clse
+	clse_message := generate_message(A_CLSE, adbClient.LocalId, int32(remoteId), []byte{})
+	adbClient.adbConn.Write(clse_message)
+	adbClient.recvCls()
 	return lists, nil
 }
 
