@@ -303,7 +303,7 @@ func printHex(key string, data []byte) {
 	fmt.Println() // 换行
 }
 
-func (adbClient *AdbClient) ShellParam(cmd string, sendOk bool) (string, error) {
+func (adbClient *AdbClient) Shell(cmd string) (string, error) {
 	if adbClient.adbConn == nil {
 		return "", errors.New("not connect")
 	}
@@ -326,21 +326,21 @@ func (adbClient *AdbClient) ShellParam(cmd string, sendOk bool) (string, error) 
 	for {
 		//adbClient.adbConn.SetReadDeadline(time.Now().Add(time.Second * 35))
 		message, _ = message_parse(adbClient.adbConn)
-		if message.command != uint32(A_WRTE) || message.data_length == 0 {
-			break
-		}
-		// Send OKAY
-		if sendOk {
+		if message.command != A_OKAY {
 			var okay_message = generate_message(A_OKAY, adbClient.LocalId, int32(remoteId), []byte{})
 			adbClient.adbConn.Write(okay_message)
 		}
+		if message.command != uint32(A_WRTE) || message.data_length == 0 {
+			break
+		}
 		out = out + string(message.payload)
 	}
-	return out, nil
-}
 
-func (adbClient *AdbClient) Shell(cmd string) (string, error) {
-	return adbClient.ShellParam(cmd, false)
+	//send clse
+	clse_message := generate_message(A_CLSE, adbClient.LocalId, int32(remoteId), []byte{})
+	adbClient.adbConn.Write(clse_message)
+	adbClient.recvCls()
+	return out, nil
 }
 
 func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
@@ -356,7 +356,7 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	// Read OKAY
 	message, err := message_parse(adbClient.adbConn)
 	if message.command != uint32(A_OKAY) {
-		log.Printf("Ls Not OKAY command:%d\r\n", message.command)
+		log.Printf("Ls Not OKAY command:%d err:%+v\r\n", message.command, err)
 		return nil, err
 	}
 	remoteId := int32(message.arg0)
@@ -544,6 +544,22 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	//read okey
 	message_parse(adbClient.adbConn)
 	return &fileStat, nil
+}
+
+/*recv cls*/
+func (adbClient *AdbClient) recvCls() error {
+	for {
+		adbClient.adbConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		msg, err := message_parse(adbClient.adbConn)
+		if err != nil {
+			break
+		}
+		if msg.command == 0 {
+			break
+		}
+	}
+	adbClient.adbConn.SetReadDeadline(time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC))
+	return nil
 }
 
 func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) error {

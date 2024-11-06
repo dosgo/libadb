@@ -135,7 +135,7 @@ func convertRGB888ToImage(rgbData []byte, width, height int) *image.RGBA {
 	return img
 }
 func (adbClient *AdbClient) Screencap() (image.Image, error) {
-	bin, err := adbClient.ShellParam("screencap -p", true)
+	bin, err := adbClient.Shell("screencap -p")
 	if err != nil {
 		return nil, err
 	}
