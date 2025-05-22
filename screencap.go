@@ -149,37 +149,45 @@ func (adbClient *AdbClient) Screencapv1() (image.Image, error) {
 	if adbClient.adbConn == nil {
 		return nil, errors.New("not connect")
 	}
-	adbClient.LocalId++
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "framebuffer:\x00"
-	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
+	var open_message = generate_message(A_OPEN, localId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
 	// Read OKAY
-	message, _ := message_parse(adbClient.adbConn)
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		return nil, err
+	}
 	if message.command != uint32(A_OKAY) {
 		log.Println("Not OKAY command")
 		return nil, errors.New("Not OKAY command")
 	}
 	remoteId := int32(message.arg0)
 	// Read WRTE
-	message, _ = message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
+	if err != nil {
+		return nil, err
+	}
 	if message.command != uint32(A_WRTE) {
 		log.Println("Not WRTE command")
 		return nil, errors.New("Not OKAY command")
 	}
 
 	var fBuf []byte
-	var okay_message = generate_message(A_OKAY, adbClient.LocalId, remoteId, []byte{})
+	var okay_message = generate_message(A_OKAY, localId, remoteId, []byte{})
 	adbClient.adbConn.Write(okay_message)
 	fBuf = append(fBuf, message.payload...)
 	for {
 		// Send OKAY
-		okay_message = generate_message(A_OKAY, adbClient.LocalId, remoteId, []byte{})
+		okay_message = generate_message(A_OKAY, localId, remoteId, []byte{})
 		adbClient.adbConn.Write(okay_message)
-		msg, _ := message_parse(adbClient.adbConn)
+
+		msg, err := adbClient.ReadMessage(localId)
 		//fmt.Printf("msg%+v\r\n", msg)
-		if msg.command != uint32(A_WRTE) {
+		if msg.command != uint32(A_WRTE) || err != nil {
 			break
 		}
 		fBuf = append(fBuf, msg.payload...)

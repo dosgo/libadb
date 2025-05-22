@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -195,6 +196,12 @@ func (adbClient *AdbClient) Connect(addr string) error {
 			return err
 		}
 	}
+	//如果连接成功，启动接收协程
+	defer func() {
+		if adbClient.adbConn != nil {
+			go adbClient.recvLoop()
+		}
+	}()
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
@@ -295,6 +302,57 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	return errors.New("auth error")
 }
 
+func (adbClient *AdbClient) recvLoop() error {
+	for {
+		message, err := message_parse(adbClient.adbConn)
+		if err != nil {
+			fmt.Println("recvLoop error:", err)
+			return err
+		}
+		fmt.Printf("recvLoop message:%d  message.arg0:%d message.arg1:%d\r\n", message.command, message.arg0, message.arg1)
+		switch message.command {
+		case A_OKAY:
+			chanel := ChannelMapInstance.GetChannel(message.arg1, false)
+			ChannelMapInstance.Bind(message.arg1, message.arg0)
+			if chanel != nil {
+				chanel <- message
+			}
+		case A_WRTE:
+			chanel := ChannelMapInstance.GetChannel(message.arg0, true)
+			if chanel != nil {
+				chanel <- message
+			}
+		case A_CLSE:
+			fmt.Printf("A_CLSE arg0:%d\r\n", message.arg0)
+			chanel := ChannelMapInstance.GetChannel(message.arg0, true)
+			if chanel != nil {
+				chanel <- message
+			}
+			if message.arg0 == 0 {
+				chanel = ChannelMapInstance.GetChannel(message.arg1, false)
+				if chanel != nil {
+					chanel <- message
+				}
+			}
+		default:
+			fmt.Printf("unknown command\r\n")
+		}
+	}
+}
+
+func (adbClient *AdbClient) ReadMessage(localId uint32) (*Message, error) {
+	chanel := ChannelMapInstance.GetChannel(localId, false)
+	if chanel == nil {
+		return nil, errors.New("channel not found")
+	}
+	select {
+	case message := <-chanel:
+		return &message, nil
+	case <-time.After(30 * time.Second):
+		return nil, errors.New("响应超时")
+	}
+}
+
 func printHex(key string, data []byte) {
 	fmt.Println(key)
 	for _, b := range data {
@@ -303,31 +361,38 @@ func printHex(key string, data []byte) {
 	fmt.Println() // 换行
 }
 
+func (adbClient *AdbClient) getLocalId() uint32 {
+	adbClient.LocalId++
+	ChannelMapInstance.AddChannel(adbClient.LocalId, nil)
+	return adbClient.LocalId
+}
 func (adbClient *AdbClient) Shell(cmd string) (string, error) {
 	if adbClient.adbConn == nil {
 		return "", errors.New("not connect")
 	}
-	adbClient.LocalId++
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "shell:" + cmd + "\n\x00"
-	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
+	var open_message = generate_message(A_OPEN, localId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
-
 	// Read OKAY
-	message, _ := message_parse(adbClient.adbConn)
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		return "", err
+	}
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKAY command %d\r\n", message.command)
 		return "", errors.New("Not OKAY command")
 	}
 	remoteId := message.arg0
-
 	// Read WRTE
 	var out = ""
 	for {
 		//adbClient.adbConn.SetReadDeadline(time.Now().Add(time.Second * 35))
-		message, _ = message_parse(adbClient.adbConn)
+		message, _ := adbClient.ReadMessage(localId)
 		if message.command != A_OKAY {
-			var okay_message = generate_message(A_OKAY, adbClient.LocalId, int32(remoteId), []byte{})
+			var okay_message = generate_message(A_OKAY, localId, int32(remoteId), []byte{})
 			adbClient.adbConn.Write(okay_message)
 		}
 		if message.command != uint32(A_WRTE) || message.data_length == 0 {
@@ -337,9 +402,8 @@ func (adbClient *AdbClient) Shell(cmd string) (string, error) {
 	}
 
 	//send clse
-	clse_message := generate_message(A_CLSE, adbClient.LocalId, int32(remoteId), []byte{})
+	clse_message := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
 	adbClient.adbConn.Write(clse_message)
-	adbClient.recvCls()
 	return out, nil
 }
 
@@ -347,25 +411,30 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	if adbClient.adbConn == nil {
 		return nil, errors.New("not connect")
 	}
-	adbClient.LocalId++
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "sync:\x00"
-	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
+	var open_message = generate_message(A_OPEN, localId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
 	// Read OKAY
-	message, err := message_parse(adbClient.adbConn)
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		fmt.Printf("err:%+v\r\n", err) // 打印错误信息，包括错误类型和错误描述
+		return nil, err
+	}
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Ls Not OKAY command:%d err:%+v\r\n", message.command, err)
 		return nil, err
 	}
 	remoteId := int32(message.arg0)
 	list_message := generate_sync_message([]byte("LIST"), uint32(len(path)))
-	wrte_message := generate_message(A_WRTE, adbClient.LocalId, remoteId, append(list_message, []byte(path)...))
+	wrte_message := generate_message(A_WRTE, localId, remoteId, append(list_message, []byte(path)...))
 	adbClient.adbConn.Write(wrte_message)
 
 	//读取okey
-	message, _ = message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKEY command\r\n")
 	}
@@ -373,7 +442,7 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	var lists []SyncMsgDent
 	for readDone {
 		// Read WRTE
-		message, _ = message_parse(adbClient.adbConn)
+		message, err = adbClient.ReadMessage(localId)
 		if message.command != uint32(A_WRTE) {
 			log.Printf("Not WRTE command:%d\r\n", message.command)
 			break
@@ -408,13 +477,12 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 
 		}
 		// Send OKAY
-		var okay_message = generate_message(A_OKAY, adbClient.LocalId, remoteId, []byte{})
+		var okay_message = generate_message(A_OKAY, localId, remoteId, []byte{})
 		adbClient.adbConn.Write(okay_message)
 	}
 	//send clse
-	clse_message := generate_message(A_CLSE, adbClient.LocalId, int32(remoteId), []byte{})
+	clse_message := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
 	adbClient.adbConn.Write(clse_message)
-	adbClient.recvCls()
 	return lists, nil
 }
 
@@ -439,32 +507,42 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	if adbClient.adbConn == nil {
 		return nil, errors.New("not connect")
 	}
-	adbClient.LocalId++
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
+	fmt.Printf("PullStream path:%s\r\n", path)
 	// 打开通道
 	var shell_cmd = "sync:\x00"
-	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
+	var open_message = generate_message(A_OPEN, localId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
 	// 读取remoteId
-	message, _ := message_parse(adbClient.adbConn)
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		return nil, err
+	}
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKAY command\r\n")
 	}
 	remoteId := message.arg0
-
 	//发送 A_write STAT
 	stat_message := generate_sync_message([]byte("STAT"), uint32(len(path)))
-	wrte_message := generate_message(A_WRTE, adbClient.LocalId, int32(remoteId), append(stat_message, []byte(path)...))
+	wrte_message := generate_message(A_WRTE, localId, int32(remoteId), append(stat_message, []byte(path)...))
 	adbClient.adbConn.Write(wrte_message)
 
 	//读取okey
-	message, _ = message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
+	if err != nil {
+		return nil, err
+	}
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKEY command\r\n")
 	}
 	//fmt.Printf("okey111:%+v\rn", message)
 	// Read WRTE响应 stat
-	message, _ = message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
+	if err != nil {
+		return nil, err
+	}
 	if message.command != uint32(A_WRTE) {
 		log.Printf("Not WRTE command\r\n")
 	}
@@ -477,16 +555,19 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	fileStat.time = binary.LittleEndian.Uint32(message.payload[12:16])
 
 	// Send OKAY
-	var okay_message = generate_message(A_OKAY, adbClient.LocalId, int32(remoteId), []byte{})
+	var okay_message = generate_message(A_OKAY, localId, int32(remoteId), []byte{})
 	adbClient.adbConn.Write(okay_message)
 
 	//发送
 	//发送 A_write STAT
 	recv_message := generate_sync_message([]byte("RECV"), uint32(len(path)))
-	wrte_message = generate_message(A_WRTE, adbClient.LocalId, int32(remoteId), append(recv_message, []byte(path)...))
+	wrte_message = generate_message(A_WRTE, localId, int32(remoteId), append(recv_message, []byte(path)...))
 	adbClient.adbConn.Write(wrte_message)
 	//read okey
-	message, _ = message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
+	if err != nil {
+		return nil, err
+	}
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKEY command\r\n")
 	}
@@ -495,14 +576,14 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	var recvRun = true
 	for recvRun {
 		//read A_write
-		message, _ = message_parse(adbClient.adbConn)
-		if message.command != uint32(A_WRTE) || message.data_length < 1 {
+		message, err = adbClient.ReadMessage(localId)
+		if message.command != uint32(A_WRTE) || message.data_length < 1 || err != nil {
 			log.Printf("Not A_WRTE command1111111111\r\n")
 			break
 		}
 		fileBuf = append(fileBuf, message.payload...)
 		// Send OKAY
-		okay_message = generate_message(A_OKAY, adbClient.LocalId, int32(remoteId), []byte{})
+		okay_message = generate_message(A_OKAY, localId, int32(remoteId), []byte{})
 		adbClient.adbConn.Write(okay_message)
 		for {
 			if len(fileBuf) < 8 {
@@ -535,60 +616,53 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	}
 
 	quit_message := generate_sync_message([]byte("QUIT"), 0)
-	wrte_message = generate_message(A_WRTE, adbClient.LocalId, int32(remoteId), append(quit_message))
+	wrte_message = generate_message(A_WRTE, localId, int32(remoteId), append(quit_message))
 	adbClient.adbConn.Write(wrte_message)
 
 	//read okey
-	message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
 
 	//send clse
-	clse_message := generate_message(A_CLSE, adbClient.LocalId, int32(remoteId), []byte{})
+	clse_message := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
 	adbClient.adbConn.Write(clse_message)
 	//read okey
-	message_parse(adbClient.adbConn)
+	adbClient.ReadMessage(localId)
 	return &fileStat, nil
-}
-
-/*recv cls*/
-func (adbClient *AdbClient) recvCls() error {
-	for {
-		adbClient.adbConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		msg, err := message_parse(adbClient.adbConn)
-		if err != nil {
-			break
-		}
-		if msg.command == 0 {
-			break
-		}
-	}
-	adbClient.adbConn.SetReadDeadline(time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC))
-	return nil
 }
 
 func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) error {
 	if adbClient.adbConn == nil {
 		return errors.New("not connect")
 	}
-	adbClient.LocalId++
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
 	// 打开通道
 	var shell_cmd = "sync:\x00"
-	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
+	var open_message = generate_message(A_OPEN, localId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
 	// 读取remoteId
-	message, _ := message_parse(adbClient.adbConn)
+
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		return err
+	}
 	if message.command != uint32(A_OKAY) {
 		return errors.New("Not OKEY command 1")
 	}
 	remoteId := message.arg0
+
 	//发送
 	//发送 A_write SEND
 	sendBuf := fmt.Sprintf("%s,%d", remotePath, mode)
 	recv_message := generate_sync_message([]byte("SEND"), uint32(len(sendBuf)))
-	wrte_message := generate_message(A_WRTE, adbClient.LocalId, int32(remoteId), append(recv_message, []byte(sendBuf)...))
+	wrte_message := generate_message(A_WRTE, localId, int32(remoteId), append(recv_message, []byte(sendBuf)...))
 	adbClient.adbConn.Write(wrte_message)
 	//read okey
-	message, _ = message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
+	if err != nil {
+		return err
+	}
 	if message.command != uint32(A_OKAY) {
 		return errors.New("Not OKEY command 4")
 	}
@@ -613,32 +687,35 @@ func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) 
 		}
 		//发送 A_write STAT
 		data_message := generate_sync_message([]byte("DATA"), uint32(n))
-		wrte_message = generate_message(A_WRTE, adbClient.LocalId, int32(remoteId), append(data_message, buffer[:n]...))
+		wrte_message = generate_message(A_WRTE, localId, int32(remoteId), append(data_message, buffer[:n]...))
 		adbClient.adbConn.Write(wrte_message)
 
-		message_parse(adbClient.adbConn)
+		adbClient.ReadMessage(localId)
 	}
 
 	//发送 A_write DONE
 	done_message := generate_sync_message([]byte("DONE"), uint32(time.Now().Unix()))
-	wrte_message = generate_message(A_WRTE, adbClient.LocalId, int32(remoteId), done_message)
+	wrte_message = generate_message(A_WRTE, localId, int32(remoteId), done_message)
 	adbClient.adbConn.Write(wrte_message)
 
 	//read okey
-	message, _ = message_parse(adbClient.adbConn)
+	message, err = adbClient.ReadMessage(localId)
+	if err != nil {
+		return err
+	}
 	if message.command != uint32(A_OKAY) {
 		return errors.New("Not OKEY command 5")
 	}
-	message_parse(adbClient.adbConn)
+
 	//send quit
 	quit_message := generate_sync_message([]byte("QUIT"), 0)
-	wrte_message = generate_message(A_WRTE, adbClient.LocalId, int32(remoteId), append(quit_message))
+	wrte_message = generate_message(A_WRTE, localId, int32(remoteId), append(quit_message))
 	adbClient.adbConn.Write(wrte_message)
-	message_parse(adbClient.adbConn)
+
 	//send clse
-	clse_message := generate_message(A_CLSE, adbClient.LocalId, int32(remoteId), []byte{})
+	clse_message := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
 	adbClient.adbConn.Write(clse_message)
-	message_parse(adbClient.adbConn)
+
 	return nil
 }
 
@@ -656,30 +733,138 @@ func (adbClient *AdbClient) Reboot() error {
 	if adbClient.adbConn == nil {
 		return errors.New("not connect")
 	}
-	adbClient.LocalId++
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "reboot:\x00"
-	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
+	var open_message = generate_message(A_OPEN, localId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
 
 	// Read OKAY
-	message, _ := message_parse(adbClient.adbConn)
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		return err
+	}
 	if message.command != uint32(A_OKAY) {
 		log.Printf("Not OKAY command\r\n")
 		return errors.New("Not OKAY command")
 	}
-
-	// Read WRTE
-	message, _ = message_parse(adbClient.adbConn)
-	if message.command != uint32(A_WRTE) {
-		log.Printf("Not WRTE command\r\n")
-		return errors.New("Not OKAY command")
-	}
 	// Send OKAY
-	var okay_message = generate_message(A_OKAY, adbClient.LocalId, int32(message.arg0), []byte{})
+	var okay_message = generate_message(A_OKAY, localId, int32(message.arg0), []byte{})
 	adbClient.adbConn.Write(okay_message)
-	message_parse(adbClient.adbConn)
 	return nil
+}
+
+func (adbClient *AdbClient) Forward(local string, remote string) error {
+	if adbClient.adbConn == nil {
+		return errors.New("未连接设备")
+	}
+
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
+	fmt.Printf("Forward2 localIdL%d\r\n", localId)
+	// 构造forward服务命令
+	forwardCmd := fmt.Sprintf("host:forward:%s;%s\x00", local, remote)
+	openMessage := generate_message(A_OPEN, localId, 0, []byte(forwardCmd))
+	adbClient.adbConn.Write(openMessage)
+	fmt.Printf("Forward3 forwardCmd:%s\r\n", forwardCmd)
+	// 读取响应
+	// Read OKAY
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Forward4\r\n")
+	if message.command != uint32(A_OKAY) {
+		err1 := errors.New("转发命令执行失败")
+		fmt.Printf("Forward5 err1:%+v\r\n", message)
+		return err1
+	}
+	remoteId := message.arg0
+	// 关闭流
+	clseMessage := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
+	adbClient.adbConn.Write(clseMessage)
+	localInfo := strings.Split(local, ":")
+	fmt.Printf("Forward4 localInfo:%+v\r\n", localInfo)
+	if localInfo[0] == "tcp" {
+		fmt.Printf("本地端口%s已转发到远程端口%s\r\n", localInfo[1], remote)
+		go adbClient.StartForward(localInfo[1], remote)
+	}
+	return nil
+}
+
+func (adbClient *AdbClient) StartForward(localPort string, remote string) error {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", localPort))
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for {
+			localConn, err := listener.Accept()
+			if err != nil {
+				log.Printf("Accept error: %v", err)
+				continue
+			}
+			go adbClient.handleForwardConnection(localConn, remote)
+		}
+	}()
+	return nil
+}
+
+func (adbClient *AdbClient) handleForwardConnection(localConn net.Conn, remote string) {
+	defer localConn.Close()
+
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
+
+	// 建立ADB数据通道
+	openMessage := generate_message(A_OPEN, localId, 0,
+		[]byte(fmt.Sprintf("%s\x00", remote)))
+
+	adbClient.adbConn.Write(openMessage)
+
+	// Read OKAY
+	message, err := adbClient.ReadMessage(localId)
+	if err != nil {
+		return
+	}
+	if message.command != uint32(A_OKAY) {
+		fmt.Printf("创建数据通道失败: %v\n", "Not OKAY command")
+		return
+	}
+	remoteId := message.arg0
+	defer func() {
+		clseMessage := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
+		adbClient.adbConn.Write(clseMessage)
+	}()
+	// 读写循环
+	go func() {
+		defer localConn.Close()
+		buf := make([]byte, 4096)
+		for {
+			n, err := localConn.Read(buf)
+			if err != nil {
+				return
+			}
+			wrteMessage := generate_message(A_WRTE, localId, int32(remoteId),
+				buf[:n])
+			adbClient.adbConn.Write(wrteMessage)
+		}
+	}()
+
+	// 接收ADB数据
+	for {
+		msg, err := adbClient.ReadMessage(localId)
+		if err != nil {
+			return
+		}
+		if msg.command == A_WRTE {
+			localConn.Write(msg.payload)
+			okayMessage := generate_message(A_OKAY, localId, int32(remoteId), []byte{})
+			adbClient.adbConn.Write(okayMessage)
+		}
+	}
 }
 
 func (adbClient *AdbClient) Close() error {
