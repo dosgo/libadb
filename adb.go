@@ -15,7 +15,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -310,6 +309,10 @@ func (adbClient *AdbClient) recvLoop() error {
 			return err
 		}
 		fmt.Printf("recvLoop message:%d  message.arg0:%d message.arg1:%d\r\n", message.command, message.arg0, message.arg1)
+		if len(message.payload) < 50 {
+			fmt.Printf("recvLoop message.payload:%s\r\n", message.payload)
+
+		}
 		switch message.command {
 		case A_OKAY:
 			chanel := ChannelMapInstance.GetChannel(message.arg1, false)
@@ -321,6 +324,11 @@ func (adbClient *AdbClient) recvLoop() error {
 			chanel := ChannelMapInstance.GetChannel(message.arg0, true)
 			if chanel != nil {
 				chanel <- message
+			} else {
+				chanel = ChannelMapInstance.GetChannel(message.arg1, false)
+				if chanel != nil {
+					chanel <- message
+				}
 			}
 		case A_CLSE:
 			fmt.Printf("A_CLSE arg0:%d\r\n", message.arg0)
@@ -753,118 +761,6 @@ func (adbClient *AdbClient) Reboot() error {
 	var okay_message = generate_message(A_OKAY, localId, int32(message.arg0), []byte{})
 	adbClient.adbConn.Write(okay_message)
 	return nil
-}
-
-func (adbClient *AdbClient) Forward(local string, remote string) error {
-	if adbClient.adbConn == nil {
-		return errors.New("未连接设备")
-	}
-
-	localId := adbClient.getLocalId()
-	defer ChannelMapInstance.DeleteChannel(localId)
-	fmt.Printf("Forward2 localIdL%d\r\n", localId)
-	// 构造forward服务命令
-	forwardCmd := fmt.Sprintf("host:forward:%s;%s\x00", local, remote)
-	openMessage := generate_message(A_OPEN, localId, 0, []byte(forwardCmd))
-	adbClient.adbConn.Write(openMessage)
-	fmt.Printf("Forward3 forwardCmd:%s\r\n", forwardCmd)
-	// 读取响应
-	// Read OKAY
-	message, err := adbClient.ReadMessage(localId)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Forward4\r\n")
-	if message.command != uint32(A_OKAY) {
-		err1 := errors.New("转发命令执行失败")
-		fmt.Printf("Forward5 err1:%+v\r\n", message)
-		return err1
-	}
-	remoteId := message.arg0
-	// 关闭流
-	clseMessage := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
-	adbClient.adbConn.Write(clseMessage)
-	localInfo := strings.Split(local, ":")
-	fmt.Printf("Forward4 localInfo:%+v\r\n", localInfo)
-	if localInfo[0] == "tcp" {
-		fmt.Printf("本地端口%s已转发到远程端口%s\r\n", localInfo[1], remote)
-		go adbClient.StartForward(localInfo[1], remote)
-	}
-	return nil
-}
-
-func (adbClient *AdbClient) StartForward(localPort string, remote string) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", localPort))
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		for {
-			localConn, err := listener.Accept()
-			if err != nil {
-				log.Printf("Accept error: %v", err)
-				continue
-			}
-			go adbClient.handleForwardConnection(localConn, remote)
-		}
-	}()
-	return nil
-}
-
-func (adbClient *AdbClient) handleForwardConnection(localConn net.Conn, remote string) {
-	defer localConn.Close()
-
-	localId := adbClient.getLocalId()
-	defer ChannelMapInstance.DeleteChannel(localId)
-
-	// 建立ADB数据通道
-	openMessage := generate_message(A_OPEN, localId, 0,
-		[]byte(fmt.Sprintf("%s\x00", remote)))
-
-	adbClient.adbConn.Write(openMessage)
-
-	// Read OKAY
-	message, err := adbClient.ReadMessage(localId)
-	if err != nil {
-		return
-	}
-	if message.command != uint32(A_OKAY) {
-		fmt.Printf("创建数据通道失败: %v\n", "Not OKAY command")
-		return
-	}
-	remoteId := message.arg0
-	defer func() {
-		clseMessage := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
-		adbClient.adbConn.Write(clseMessage)
-	}()
-	// 读写循环
-	go func() {
-		defer localConn.Close()
-		buf := make([]byte, 4096)
-		for {
-			n, err := localConn.Read(buf)
-			if err != nil {
-				return
-			}
-			wrteMessage := generate_message(A_WRTE, localId, int32(remoteId),
-				buf[:n])
-			adbClient.adbConn.Write(wrteMessage)
-		}
-	}()
-
-	// 接收ADB数据
-	for {
-		msg, err := adbClient.ReadMessage(localId)
-		if err != nil {
-			return
-		}
-		if msg.command == A_WRTE {
-			localConn.Write(msg.payload)
-			okayMessage := generate_message(A_OKAY, localId, int32(remoteId), []byte{})
-			adbClient.adbConn.Write(okayMessage)
-		}
-	}
 }
 
 func (adbClient *AdbClient) Close() error {
