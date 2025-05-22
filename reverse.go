@@ -3,7 +3,6 @@ package libadb
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 )
@@ -34,29 +33,49 @@ func (adbClient *AdbClient) Reverse(local string, remote string) error {
 	// 关闭流
 	clseMessage := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
 	adbClient.adbConn.Write(clseMessage)
-	remoteInfo := strings.Split(remote, ":")
-	if remoteInfo[0] == "tcp" {
-		go adbClient.StartReverse(remoteInfo[1], remote)
-	}
 	return nil
 }
 
-func (adbClient *AdbClient) StartReverse(localPort string, remote string) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", localPort))
-	if err != nil {
-		fmt.Printf("StartReverse1 err:%+v\r\n", err)
-		return err
+func (adbClient *AdbClient) conectHost(message Message) {
+	hostInfo := strings.Split(strings.TrimRight(string(message.payload), "\x00"), ":")
+	if hostInfo[0] != "tcp" {
+		return
 	}
+	localConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", hostInfo[1]))
+	if localConn == nil || err != nil {
+		return
+	}
+	localId := adbClient.getLocalId()
+	defer ChannelMapInstance.DeleteChannel(localId)
+
+	remoteId := message.arg0
+	ChannelMapInstance.Bind(localId, remoteId)
+	clseMessage := generate_message(A_OKAY, localId, int32(remoteId), []byte{})
+	adbClient.adbConn.Write(clseMessage)
 
 	go func() {
+		defer localConn.Close()
+		buf := make([]byte, 4096)
 		for {
-			localConn, err := listener.Accept()
+			n, err := localConn.Read(buf)
 			if err != nil {
-				log.Printf("Accept error: %v", err)
-				continue
+				return
 			}
-			fmt.Printf("StartReverse1 addr:\r\n", localConn.LocalAddr())
+			wrteMessage := generate_message(A_WRTE, localId, int32(remoteId),
+				buf[:n])
+			adbClient.adbConn.Write(wrteMessage)
 		}
 	}()
-	return nil
+
+	for {
+		msg, err := adbClient.ReadMessage(localId)
+		if err != nil {
+			return
+		}
+		if msg.command == A_WRTE {
+			localConn.Write(msg.payload)
+			okayMessage := generate_message(A_OKAY, localId, int32(remoteId), []byte{})
+			adbClient.adbConn.Write(okayMessage)
+		}
+	}
 }

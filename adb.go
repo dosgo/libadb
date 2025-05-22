@@ -308,9 +308,9 @@ func (adbClient *AdbClient) recvLoop() error {
 			fmt.Println("recvLoop error:", err)
 			return err
 		}
-		fmt.Printf("recvLoop message:%d  message.arg0:%d message.arg1:%d\r\n", message.command, message.arg0, message.arg1)
+		//fmt.Printf("recvLoop message:%d  message.arg0:%d message.arg1:%d\r\n", message.command, message.arg0, message.arg1)
 		if len(message.payload) < 50 {
-			fmt.Printf("recvLoop message.payload:%s\r\n", message.payload)
+			//fmt.Printf("recvLoop message.payload:%s\r\n", message.payload)
 
 		}
 		switch message.command {
@@ -342,6 +342,9 @@ func (adbClient *AdbClient) recvLoop() error {
 					chanel <- message
 				}
 			}
+		case A_OPEN:
+			fmt.Printf("A_OPEN message:%d  message.arg0:%d message.arg1:%d payload:%s\r\n", message.command, message.arg0, message.arg1, message.payload)
+			go adbClient.conectHost(message)
 		default:
 			fmt.Printf("unknown command\r\n")
 		}
