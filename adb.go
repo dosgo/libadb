@@ -360,7 +360,7 @@ func (adbClient *AdbClient) ReadMessage(localId uint32) (*Message, error) {
 	case message := <-chanel:
 		return &message, nil
 	case <-time.After(30 * time.Second):
-		return nil, errors.New("响应超时")
+		return nil, errors.New("timeout")
 	}
 }
 
@@ -378,6 +378,10 @@ func (adbClient *AdbClient) getLocalId() uint32 {
 	return adbClient.LocalId
 }
 func (adbClient *AdbClient) Shell(cmd string) (string, error) {
+	return adbClient.ShellCmd(cmd, false)
+}
+
+func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 	if adbClient.adbConn == nil {
 		return "", errors.New("not connect")
 	}
@@ -401,7 +405,10 @@ func (adbClient *AdbClient) Shell(cmd string) (string, error) {
 	var out = ""
 	for {
 		//adbClient.adbConn.SetReadDeadline(time.Now().Add(time.Second * 35))
-		message, _ := adbClient.ReadMessage(localId)
+		message, err := adbClient.ReadMessage(localId)
+		if block && err.Error() == "timeout" {
+			continue
+		}
 		if message.command != A_OKAY {
 			var okay_message = generate_message(A_OKAY, localId, int32(remoteId), []byte{})
 			adbClient.adbConn.Write(okay_message)
