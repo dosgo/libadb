@@ -406,7 +406,7 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 	for {
 		//adbClient.adbConn.SetReadDeadline(time.Now().Add(time.Second * 35))
 		message, err := adbClient.ReadMessage(localId)
-		if block && err.Error() == "timeout" {
+		if block &&  err != nil && err.Error() == "timeout" {
 			continue
 		}
 		if message.command != A_OKAY {
