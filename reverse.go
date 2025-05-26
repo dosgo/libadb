@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 func (adbClient *AdbClient) Reverse(local string, remote string) error {
@@ -36,15 +37,19 @@ func (adbClient *AdbClient) Reverse(local string, remote string) error {
 	return nil
 }
 
-func (adbClient *AdbClient) conectHost(message Message) {
+func (adbClient *AdbClient) getLocalConnet(message Message) (net.Conn, error) {
 	hostInfo := strings.Split(strings.TrimRight(string(message.payload), "\x00"), ":")
 	if hostInfo[0] != "tcp" {
-		return
+		return nil, errors.New("不支持的协议")
 	}
-	localConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", hostInfo[1]))
+	localConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%s", hostInfo[1]), time.Millisecond*300)
 	if localConn == nil || err != nil {
-		return
+		return nil, err
 	}
+	return localConn, nil
+}
+func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
+
 	localId := adbClient.getLocalId()
 	defer ChannelMapInstance.DeleteChannel(localId)
 

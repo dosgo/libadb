@@ -344,7 +344,12 @@ func (adbClient *AdbClient) recvLoop() error {
 			}
 		case A_OPEN:
 			fmt.Printf("A_OPEN message:%d  message.arg0:%d message.arg1:%d payload:%s\r\n", message.command, message.arg0, message.arg1, message.payload)
-			go adbClient.conectHost(message)
+
+			localConn, err := adbClient.getLocalConnet(message)
+			if err != nil {
+				continue
+			}
+			go adbClient.conectHost(message, localConn)
 		default:
 			fmt.Printf("unknown command\r\n")
 		}
@@ -391,6 +396,7 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 	var shell_cmd = "shell:" + cmd + "\n\x00"
 	var open_message = generate_message(A_OPEN, localId, 0, []byte(shell_cmd))
 	adbClient.adbConn.Write(open_message)
+
 	// Read OKAY
 	message, err := adbClient.ReadMessage(localId)
 	if err != nil {
@@ -401,12 +407,16 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 		return "", errors.New("Not OKAY command")
 	}
 	remoteId := message.arg0
+	defer func() {
+		clse_message := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
+		adbClient.adbConn.Write(clse_message)
+	}()
 	// Read WRTE
 	var out = ""
 	for {
 		//adbClient.adbConn.SetReadDeadline(time.Now().Add(time.Second * 35))
 		message, err := adbClient.ReadMessage(localId)
-		if block &&  err != nil && err.Error() == "timeout" {
+		if block && err != nil && err.Error() == "timeout" {
 			continue
 		}
 		if message.command != A_OKAY {
@@ -416,16 +426,13 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 		if message.command != uint32(A_WRTE) || message.data_length == 0 {
 			break
 		}
+
 		if block {
 			os.Stdout.Write(message.payload)
 		} else {
 			out = out + string(message.payload)
 		}
 	}
-
-	//send clse
-	clse_message := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
-	adbClient.adbConn.Write(clse_message)
 	return out, nil
 }
 
