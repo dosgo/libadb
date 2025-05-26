@@ -416,7 +416,11 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 		if message.command != uint32(A_WRTE) || message.data_length == 0 {
 			break
 		}
-		out = out + string(message.payload)
+		if block {
+			os.Stdout.Write(message.payload)
+		} else {
+			out = out + string(message.payload)
+		}
 	}
 
 	//send clse
