@@ -301,6 +301,14 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	return errors.New("auth error")
 }
 
+func (adbClient *AdbClient) write(chanel chan Message, message Message) {
+	select {
+	case chanel <- message:
+		//fmt.Println("发送成功，通道未满")
+	default:
+		fmt.Println("通道已满，无法发送")
+	}
+}
 func (adbClient *AdbClient) recvLoop() error {
 	for {
 		message, err := message_parse(adbClient.adbConn)
@@ -318,28 +326,23 @@ func (adbClient *AdbClient) recvLoop() error {
 			chanel := ChannelMapInstance.GetChannel(message.arg1, false)
 			ChannelMapInstance.Bind(message.arg1, message.arg0)
 			if chanel != nil {
-				chanel <- message
+				adbClient.write(chanel, message)
 			}
 		case A_WRTE:
 			chanel := ChannelMapInstance.GetChannel(message.arg0, true)
 			if chanel != nil {
-				chanel <- message
-			} else {
-				chanel = ChannelMapInstance.GetChannel(message.arg1, false)
-				if chanel != nil {
-					chanel <- message
-				}
+				adbClient.write(chanel, message)
 			}
 		case A_CLSE:
 			fmt.Printf("A_CLSE arg0:%d\r\n", message.arg0)
 			chanel := ChannelMapInstance.GetChannel(message.arg0, true)
 			if chanel != nil {
-				chanel <- message
+				adbClient.write(chanel, message)
 			}
 			if message.arg0 == 0 {
 				chanel = ChannelMapInstance.GetChannel(message.arg1, false)
 				if chanel != nil {
-					chanel <- message
+					adbClient.write(chanel, message)
 				}
 			}
 		case A_OPEN:
