@@ -48,7 +48,7 @@ func (cm *ChannelMap) AddChannel(localId uint32, chanel chan Message) error {
 	if chanel != nil {
 		cm.data[key] = chanel
 	} else {
-		cm.data[key] = make(chan Message, 5)
+		cm.data[key] = make(chan Message, 20)
 	}
 	return nil
 }

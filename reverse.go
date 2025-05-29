@@ -76,7 +76,10 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 	defer localConn.Close()
 	for {
 		msg, err := adbClient.ReadMessage(localId)
-		if err != nil {
+		if err != nil && err.Error() == "timeout" {
+			continue
+		}
+		if err != nil && err.Error() != "timeout" {
 			return
 		}
 		if msg.command == A_WRTE {
