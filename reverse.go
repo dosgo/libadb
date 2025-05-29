@@ -60,6 +60,7 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 
 	go func() {
 		buf := make([]byte, 4096)
+		defer ChannelMapInstance.DeleteChannel(localId)
 		for {
 			n, err := localConn.Read(buf)
 			if err != nil {
