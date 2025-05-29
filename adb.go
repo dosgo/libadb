@@ -422,7 +422,9 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 	remoteId := message.arg0
 	defer func() {
 		clse_message := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
-		adbClient.adbConn.Write(clse_message)
+		if adbClient.adbConn != nil {
+			adbClient.adbConn.Write(clse_message)
+		}
 	}()
 	// Read WRTE
 	var out = ""

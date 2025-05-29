@@ -59,7 +59,6 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 	adbClient.adbConn.Write(clseMessage)
 
 	go func() {
-		defer localConn.Close()
 		buf := make([]byte, 4096)
 		for {
 			n, err := localConn.Read(buf)
@@ -68,10 +67,12 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 			}
 			wrteMessage := generate_message(A_WRTE, localId, int32(remoteId),
 				buf[:n])
-			adbClient.adbConn.Write(wrteMessage)
+			if adbClient.adbConn != nil {
+				adbClient.adbConn.Write(wrteMessage)
+			}
 		}
 	}()
-
+	defer localConn.Close()
 	for {
 		msg, err := adbClient.ReadMessage(localId)
 		if err != nil {
@@ -80,7 +81,9 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 		if msg.command == A_WRTE {
 			localConn.Write(msg.payload)
 			okayMessage := generate_message(A_OKAY, localId, int32(remoteId), []byte{})
-			adbClient.adbConn.Write(okayMessage)
+			if adbClient.adbConn != nil {
+				adbClient.adbConn.Write(okayMessage)
+			}
 		}
 	}
 }
