@@ -65,6 +65,16 @@ func (cm *ChannelMap) DeleteChannel(localId uint32) {
 	}
 	return
 }
+func (cm *ChannelMap) CloseAllAndClear() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	// 关闭所有通道
+	for key, ch := range cm.data {
+		close(ch)
+		delete(cm.data, key)
+	}
+	cm.mappingList = make(map[uint32]uint32) // 方式1：重建映射（更高效）
+}
 
 func isClosed(ch chan Message) bool {
 	select {

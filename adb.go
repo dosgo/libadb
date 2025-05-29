@@ -310,6 +310,13 @@ func (adbClient *AdbClient) write(chanel chan Message, message Message) {
 	}
 }
 func (adbClient *AdbClient) recvLoop() error {
+	defer func() {
+		if adbClient.adbConn != nil {
+			adbClient.adbConn.Close()
+			adbClient.adbConn = nil
+		}
+		ChannelMapInstance.CloseAllAndClear()
+	}()
 	for {
 		message, err := message_parse(adbClient.adbConn)
 		if err != nil {
@@ -365,7 +372,10 @@ func (adbClient *AdbClient) ReadMessage(localId uint32) (*Message, error) {
 		return nil, errors.New("channel not found")
 	}
 	select {
-	case message := <-chanel:
+	case message, ok := <-chanel:
+		if !ok {
+			return nil, errors.New("channel closed")
+		}
 		return &message, nil
 	case <-time.After(30 * time.Second):
 		return nil, errors.New("timeout")
@@ -421,6 +431,9 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 		message, err := adbClient.ReadMessage(localId)
 		if block && err != nil && err.Error() == "timeout" {
 			continue
+		}
+		if block && message == nil {
+			break
 		}
 		if message.command != A_OKAY {
 			var okay_message = generate_message(A_OKAY, localId, int32(remoteId), []byte{})
