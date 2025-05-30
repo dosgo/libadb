@@ -86,7 +86,7 @@ type AdbClient struct {
 	CertFile string
 	KeyFile  string
 	PeerName string
-	adbConn  net.Conn
+	adbConn  io.ReadWriteCloser
 	LocalId  uint32
 }
 
@@ -160,7 +160,7 @@ func generate_message(command uint32, arg0 uint32, arg1 int32, data []byte) []by
 	return message.Bytes()
 }
 
-func message_parse(conn net.Conn) (Message, error) {
+func message_parse(conn io.ReadWriteCloser) (Message, error) {
 	var buffer = make([]byte, ADB_HEADER_LENGTH)
 	_, err := io.ReadFull(conn, buffer)
 	var header Message
@@ -257,6 +257,80 @@ func (adbClient *AdbClient) Connect(addr string) error {
 			return nil
 		}
 	}
+	//android 10
+	if message.command == A_AUTH {
+
+		if message.arg0 != ADB_AUTH_TOKEN {
+			return errors.New("ddd")
+		}
+
+		certificates, err := tls.LoadX509KeyPair(adbClient.CertFile, adbClient.KeyFile)
+		if err != nil {
+			fmt.Printf("certificates error err:%+v\r\n", err)
+			return err
+		}
+		privateKey, ok := certificates.PrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			fmt.Printf("certificates error err:%+v\r\n", err)
+			return err
+		}
+		// 使用私钥生成 RSA 签名
+		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA1, message.payload)
+		if err != nil {
+			log.Printf("err:%+v\r\n", err)
+			return nil
+		}
+
+		var sign_message = generate_message(A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
+		conn.Write(sign_message)
+		message, _ = message_parse(conn)
+		if message.command == A_AUTH && message.arg0 == ADB_AUTH_TOKEN {
+			publicKeybyte, _ := encodeRSAPublicKey(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
+			pubKeyByte := base64.StdEncoding.EncodeToString(publicKeybyte)
+			pubKeyByte = pubKeyByte + " " + adbClient.PeerName + "\x00"
+			var auth_message = generate_message(A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, []byte(pubKeyByte))
+			conn.Write(auth_message)
+			message, _ = message_parse(conn)
+		}
+		//连接成功
+		if message.command == A_CNXN {
+			adbClient.adbConn = conn
+			return nil
+		}
+	}
+	return errors.New("auth error")
+}
+
+func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
+	if !fileExists(adbClient.CertFile) || !fileExists(adbClient.KeyFile) {
+		err := generateCert(adbClient.CertFile, adbClient.KeyFile, adbClient.PeerName)
+		if err != nil {
+			return err
+		}
+	}
+	//如果连接成功，启动接收协程
+	defer func() {
+		if adbClient.adbConn != nil {
+			go adbClient.recvLoop()
+		}
+	}()
+
+	// Send CNXN first
+	var cnxn_message = generate_message(
+		A_CNXN,
+		A_VERSION,
+		MAX_PAYLOAD,
+		[]byte(SYSTEM_IDENTITY_STRING_HOST),
+	)
+	conn.Write(cnxn_message)
+	// Read Auth command
+	var message, _ = message_parse(conn)
+	if message.command == A_CNXN {
+		fmt.Printf("No auth required\r\n")
+		adbClient.adbConn = conn
+		return nil
+	}
+
 	//android 10
 	if message.command == A_AUTH {
 
