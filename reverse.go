@@ -17,8 +17,8 @@ func (adbClient *AdbClient) Reverse(local string, remote string) error {
 	// 构造forward服务命令
 	forwardCmd := fmt.Sprintf("reverse:forward:%s;%s\x00", local, remote)
 
-	openMessage := generate_message(A_OPEN, localId, 0, []byte(forwardCmd))
-	adbClient.adbConn.Write(openMessage)
+	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(forwardCmd))
+
 	// 读取响应
 	// Read OKAY
 	message, err := adbClient.ReadMessage(localId)
@@ -32,8 +32,7 @@ func (adbClient *AdbClient) Reverse(local string, remote string) error {
 	}
 	remoteId := message.arg0
 	// 关闭流
-	clseMessage := generate_message(A_CLSE, localId, int32(remoteId), []byte{})
-	adbClient.adbConn.Write(clseMessage)
+	send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
 	return nil
 }
 
@@ -55,8 +54,7 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 
 	remoteId := message.arg0
 	ChannelMapInstance.Bind(localId, remoteId)
-	clseMessage := generate_message(A_OKAY, localId, int32(remoteId), []byte{})
-	adbClient.adbConn.Write(clseMessage)
+	send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
 
 	go func() {
 		buf := make([]byte, 4096)
@@ -66,11 +64,9 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 			if err != nil {
 				return
 			}
-			wrteMessage := generate_message(A_WRTE, localId, int32(remoteId),
+			send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId),
 				buf[:n])
-			if adbClient.adbConn != nil {
-				adbClient.adbConn.Write(wrteMessage)
-			}
+
 		}
 	}()
 	defer localConn.Close()
@@ -84,10 +80,8 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 		}
 		if msg.command == A_WRTE {
 			localConn.Write(msg.payload)
-			okayMessage := generate_message(A_OKAY, localId, int32(remoteId), []byte{})
-			if adbClient.adbConn != nil {
-				adbClient.adbConn.Write(okayMessage)
-			}
+			send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
+
 		}
 	}
 }
