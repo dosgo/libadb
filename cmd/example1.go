@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/dosgo/libadb"
@@ -12,17 +11,15 @@ func main() {
 
 	//init
 	var adbClient = libadb.AdbClient{CertFile: "adbkey.pub", KeyFile: "adbkey.key", PeerName: "test8"}
-	//adbClient.Pair("188423", "192.168.78.123:44767")
+	adbClient.Pair("356447", "172.30.17.78:37395")
 	// Manual connection
-	adbClient.Connect("192.168.78.115:40753")
-	out, _ := adbClient.Shell("pm list packages")
-	fmt.Printf("11%+s", out)
-
-	lists, _ := adbClient.Ls("/storage/emulated/0/Download")
-	for _, value := range lists {
-		log.Printf("file:%+v %s\r\n", value.Name, time.Unix(int64(value.Time), 0).Format("2006-01-02 15:04:05"))
-	}
-	err := adbClient.Pull("/storage/emulated/0/Download/中国国家铁路集团有限公司2022年年度报告.pdf", "test.pdf")
+	adbClient.Connect("172.30.17.78:42201")
+	startTime := time.Now()
+	err := adbClient.Pull("/storage/emulated/0/Download/v9.4.2d_tl_google_demo_20250424_1332.apk", "test.apk")
 	fmt.Printf("pull err:%+v", err)
+	duration := time.Since(startTime)
+
+	fmt.Printf("duration: %v\n", duration)
+
 	//fmt.Scanln()
 }
