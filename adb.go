@@ -123,19 +123,12 @@ type Framebuffer_headV2 struct {
 	alpha_length uint32
 }
 
-func get_payload_checksum(data []byte, offset int, length int) int {
+func get_payload_checksum(data []byte) int {
 	checksum := 0
-
-	// 确保索引不会越界
-	endIndex := offset + length
-	if endIndex > len(data) {
-		endIndex = len(data)
-	}
-
-	for i := offset; i < endIndex; i++ {
+	endIndex := len(data)
+	for i := 0; i < endIndex; i++ {
 		checksum += int(data[i])
 	}
-
 	return checksum
 }
 
@@ -145,9 +138,8 @@ func generate_message(command uint32, arg0 uint32, arg1 int32, data []byte) []by
 	binary.Write(&message, binary.LittleEndian, arg0)
 	binary.Write(&message, binary.LittleEndian, arg1)
 	if len(data) != 0 {
-
 		binary.Write(&message, binary.LittleEndian, int32(len(data)))
-		checksum := get_payload_checksum(data, 0, len(data))
+		checksum := get_payload_checksum(data)
 		binary.Write(&message, binary.LittleEndian, int32(checksum))
 	} else {
 		binary.Write(&message, binary.LittleEndian, int32(0))
@@ -396,16 +388,15 @@ func (adbClient *AdbClient) recvLoop() error {
 		ChannelMapInstance.CloseAllAndClear()
 	}()
 	for {
+		if adbClient.adbConn == nil {
+			break
+		}
 		message, err := message_parse(adbClient.adbConn)
 		if err != nil {
 			fmt.Println("recvLoop error:", err)
 			return err
 		}
-		//fmt.Printf("recvLoop message:%d  message.arg0:%d message.arg1:%d\r\n", message.command, message.arg0, message.arg1)
-		if len(message.payload) < 50 {
-			//fmt.Printf("recvLoop message.payload:%s\r\n", message.payload)
 
-		}
 		switch message.command {
 		case A_OKAY:
 			chanel := ChannelMapInstance.GetChannel(message.arg1, false)
@@ -442,6 +433,7 @@ func (adbClient *AdbClient) recvLoop() error {
 			fmt.Printf("unknown command\r\n")
 		}
 	}
+	return nil
 }
 
 func (adbClient *AdbClient) ReadMessage(localId uint32) (*Message, error) {
