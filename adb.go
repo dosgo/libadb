@@ -123,12 +123,21 @@ type Framebuffer_headV2 struct {
 	alpha_length uint32
 }
 
-func get_payload_checksum(data []byte) int {
+var adbHeader = make([]byte, ADB_HEADER_LENGTH)
+
+func get_payload_checksum(data []byte, offset int, length int) int {
 	checksum := 0
-	endIndex := len(data)
-	for i := 0; i < endIndex; i++ {
+
+	// 确保索引不会越界
+	endIndex := offset + length
+	if endIndex > len(data) {
+		endIndex = len(data)
+	}
+
+	for i := offset; i < endIndex; i++ {
 		checksum += int(data[i])
 	}
+
 	return checksum
 }
 
@@ -139,7 +148,7 @@ func generate_message(command uint32, arg0 uint32, arg1 int32, data []byte) []by
 	binary.Write(&message, binary.LittleEndian, arg1)
 	if len(data) != 0 {
 		binary.Write(&message, binary.LittleEndian, int32(len(data)))
-		checksum := get_payload_checksum(data)
+		checksum := get_payload_checksum(data, 0, len(data))
 		binary.Write(&message, binary.LittleEndian, int32(checksum))
 	} else {
 		binary.Write(&message, binary.LittleEndian, int32(0))
@@ -163,22 +172,20 @@ func send_message(conn io.ReadWriteCloser, command uint32, arg0 uint32, arg1 int
 }
 
 func message_parse(conn io.ReadWriteCloser) (Message, error) {
-	var buffer = make([]byte, ADB_HEADER_LENGTH)
-	_, err := io.ReadFull(conn, buffer)
+	_, err := io.ReadFull(conn, adbHeader)
 	var header Message
 	if err != nil {
 		return header, err
 	}
-	header.command = binary.LittleEndian.Uint32(buffer[:4])
-	header.arg0 = binary.LittleEndian.Uint32(buffer[4:8])
-	header.arg1 = binary.LittleEndian.Uint32(buffer[8:12])
-	header.data_length = binary.LittleEndian.Uint32(buffer[12:16])
-	header.data_check = binary.LittleEndian.Uint32(buffer[16:20])
-	header.magic = binary.LittleEndian.Uint32(buffer[20:24])
+	header.command = binary.LittleEndian.Uint32(adbHeader[:4])
+	header.arg0 = binary.LittleEndian.Uint32(adbHeader[4:8])
+	header.arg1 = binary.LittleEndian.Uint32(adbHeader[8:12])
+	header.data_length = binary.LittleEndian.Uint32(adbHeader[12:16])
+	header.data_check = binary.LittleEndian.Uint32(adbHeader[16:20])
+	header.magic = binary.LittleEndian.Uint32(adbHeader[20:24])
 	if header.data_length > 0 {
-		data_raw := make([]byte, header.data_length)
-		io.ReadFull(conn, data_raw)
-		header.payload = data_raw
+		header.payload = make([]byte, header.data_length)
+		io.ReadFull(conn, header.payload)
 	}
 	return header, nil
 }
@@ -329,6 +336,8 @@ func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
 		return nil
 	}
 
+	fmt.Printf("message.command:%d\r\n", message.command)
+
 	//android 10
 	if message.command == A_AUTH {
 
@@ -388,15 +397,16 @@ func (adbClient *AdbClient) recvLoop() error {
 		ChannelMapInstance.CloseAllAndClear()
 	}()
 	for {
-		if adbClient.adbConn == nil {
-			break
-		}
 		message, err := message_parse(adbClient.adbConn)
 		if err != nil {
 			fmt.Println("recvLoop error:", err)
 			return err
 		}
+		//fmt.Printf("recvLoop message:%d  message.arg0:%d message.arg1:%d\r\n", message.command, message.arg0, message.arg1)
+		if len(message.payload) < 50 {
+			//fmt.Printf("recvLoop message.payload:%s\r\n", message.payload)
 
+		}
 		switch message.command {
 		case A_OKAY:
 			chanel := ChannelMapInstance.GetChannel(message.arg1, false)
@@ -433,7 +443,6 @@ func (adbClient *AdbClient) recvLoop() error {
 			fmt.Printf("unknown command\r\n")
 		}
 	}
-	return nil
 }
 
 func (adbClient *AdbClient) ReadMessage(localId uint32) (*Message, error) {
