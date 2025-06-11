@@ -60,12 +60,7 @@ func (cm *ChannelMap) DeleteChannel(localId uint32) {
 		if !isClosed(ch) {
 			close(ch)
 		}
-		for {
-			_, ok := <-ch
-			if !ok {
-				break
-			}
-		}
+		cleanupChan(ch)
 		delete(cm.data, key)
 		return
 	}
@@ -76,13 +71,10 @@ func (cm *ChannelMap) CloseAllAndClear() {
 	defer cm.mu.Unlock()
 	// 关闭所有通道
 	for key, ch := range cm.data {
-		close(ch)
-		for {
-			_, ok := <-ch
-			if !ok {
-				break
-			}
+		if !isClosed(ch) {
+			close(ch)
 		}
+		cleanupChan(ch)
 		delete(cm.data, key)
 	}
 	cm.mappingList = make(map[uint32]uint32) // 方式1：重建映射（更高效）
@@ -90,9 +82,26 @@ func (cm *ChannelMap) CloseAllAndClear() {
 
 func isClosed(ch chan Message) bool {
 	select {
-	case <-ch:
-		return true
+	case _, ok := <-ch:
+		if !ok {
+			return true
+		}
 	default:
 	}
 	return false
+}
+
+func cleanupChan(ch chan Message) {
+	var isClear = true
+	for isClear {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				isClear = false
+			}
+			break
+		default:
+			isClear = false
+		}
+	}
 }
