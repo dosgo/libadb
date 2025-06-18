@@ -225,7 +225,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	var message, _ = message_parse(conn)
 	if message.command == A_CNXN {
 		fmt.Printf("No auth required\r\n")
-		adbClient.adbConn = conn
+		adbClient.adbConn = NewBufferedReadWriteCloser(conn, 1024*32)
 		return nil
 	}
 
@@ -260,7 +260,6 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		message, _ = message_parse(conn)
 		//连接成功
 		if message.command == A_CNXN {
-
 			adbClient.adbConn = NewBufferedReadWriteCloser(conn, 1024*32)
 			return nil
 		}
@@ -333,7 +332,7 @@ func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
 	var message, _ = message_parse(conn)
 	if message.command == A_CNXN {
 		fmt.Printf("No auth required\r\n")
-		adbClient.adbConn = conn
+		adbClient.adbConn = NewBufferedReadWriteCloser(conn, 1024*32)
 		return nil
 	}
 
@@ -374,7 +373,7 @@ func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
 		}
 		//连接成功
 		if message.command == A_CNXN {
-			adbClient.adbConn = conn
+			adbClient.adbConn = NewBufferedReadWriteCloser(conn, 1024*32)
 			return nil
 		}
 	}
