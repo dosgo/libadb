@@ -260,7 +260,8 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		message, _ = message_parse(conn)
 		//连接成功
 		if message.command == A_CNXN {
-			adbClient.adbConn = conn
+
+			adbClient.adbConn = NewBufferedReadWriteCloser(conn)
 			return nil
 		}
 	}
@@ -300,7 +301,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		}
 		//连接成功
 		if message.command == A_CNXN {
-			adbClient.adbConn = conn
+			adbClient.adbConn = NewBufferedReadWriteCloser(conn)
 			return nil
 		}
 	}
