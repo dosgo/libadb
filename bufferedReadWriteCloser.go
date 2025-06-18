@@ -14,7 +14,7 @@ type BufferedReadWriteCloser struct {
 func NewBufferedReadWriteCloser(conn net.Conn) *BufferedReadWriteCloser {
 	return &BufferedReadWriteCloser{
 		Conn: conn,
-		br:   bufio.NewReader(conn),
+		br:   bufio.NewReaderSize(conn, 1024*16),
 	}
 }
 
