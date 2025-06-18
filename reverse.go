@@ -57,7 +57,7 @@ func (adbClient *AdbClient) conectHost(message Message, localConn net.Conn) {
 	send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
 
 	go func() {
-		buf := make([]byte, 4096)
+		buf := make([]byte, 1024*32)
 		defer ChannelMapInstance.DeleteChannel(localId)
 		for {
 			n, err := localConn.Read(buf)
