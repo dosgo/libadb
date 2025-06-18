@@ -11,10 +11,10 @@ type BufferedReadWriteCloser struct {
 }
 
 // NewBufferedReadWriteCloser 创建一个带缓冲的ReadWriteCloser
-func NewBufferedReadWriteCloser(conn net.Conn) *BufferedReadWriteCloser {
+func NewBufferedReadWriteCloser(conn net.Conn, size int) *BufferedReadWriteCloser {
 	return &BufferedReadWriteCloser{
 		Conn: conn,
-		br:   bufio.NewReaderSize(conn, 1024*16),
+		br:   bufio.NewReaderSize(conn, size),
 	}
 }
 
