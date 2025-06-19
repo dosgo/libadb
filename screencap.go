@@ -153,7 +153,7 @@ func (adbClient *AdbClient) Screencapv1() (image.Image, error) {
 	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "framebuffer:\x00"
-	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
 
 	// Read OKAY
 	message, err := adbClient.ReadMessage(localId)
@@ -176,11 +176,11 @@ func (adbClient *AdbClient) Screencapv1() (image.Image, error) {
 	}
 
 	var fBuf []byte
-	send_message(adbClient.adbConn, A_OKAY, localId, remoteId, []byte{})
+	adbClient.send_message(adbClient.adbConn, A_OKAY, localId, remoteId, []byte{})
 	fBuf = append(fBuf, message.payload...)
 	for {
 		// Send OKAY
-		send_message(adbClient.adbConn, A_OKAY, localId, remoteId, []byte{})
+		adbClient.send_message(adbClient.adbConn, A_OKAY, localId, remoteId, []byte{})
 
 		msg, err := adbClient.ReadMessage(localId)
 		//fmt.Printf("msg%+v\r\n", msg)

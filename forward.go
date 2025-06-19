@@ -20,7 +20,7 @@ func (adbClient *AdbClient) Forward(local string, remote string) error {
 	//forwardCmd := fmt.Sprintf("host-serial:172.30.16.134:39379:forward:%s;%s\x00", local, remote)
 	forwardCmd := fmt.Sprintf("host:\x00")
 
-	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(forwardCmd))
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(forwardCmd))
 	fmt.Printf("forwardCmd:%s\r\n", forwardCmd)
 	// 读取响应
 	// Read OKAY
@@ -36,7 +36,7 @@ func (adbClient *AdbClient) Forward(local string, remote string) error {
 	}
 	remoteId := message.arg0
 	// 关闭流
-	send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
+	adbClient.send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
 	localInfo := strings.Split(local, ":")
 	fmt.Printf("Forward4 localInfo:%+v\r\n", localInfo)
 	if localInfo[0] == "tcp" {
@@ -72,7 +72,7 @@ func (adbClient *AdbClient) handleForwardConnection(localConn net.Conn, remote s
 	defer ChannelMapInstance.DeleteChannel(localId)
 
 	// 建立ADB数据通道
-	send_message(adbClient.adbConn, A_OPEN, localId, 0,
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0,
 		[]byte(fmt.Sprintf("%s\x00", remote)))
 
 	// Read OKAY
@@ -86,7 +86,7 @@ func (adbClient *AdbClient) handleForwardConnection(localConn net.Conn, remote s
 	}
 	remoteId := message.arg0
 	defer func() {
-		send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
+		adbClient.send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
 	}()
 	// 读写循环
 	go func() {
@@ -97,7 +97,7 @@ func (adbClient *AdbClient) handleForwardConnection(localConn net.Conn, remote s
 			if err != nil {
 				return
 			}
-			send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId),
+			adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId),
 				buf[:n])
 		}
 	}()
@@ -110,7 +110,7 @@ func (adbClient *AdbClient) handleForwardConnection(localConn net.Conn, remote s
 		}
 		if msg.command == A_WRTE {
 			localConn.Write(msg.payload)
-			send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
+			adbClient.send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
 
 		}
 	}

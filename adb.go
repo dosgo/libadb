@@ -86,6 +86,7 @@ type AdbClient struct {
 	CertFile string
 	KeyFile  string
 	PeerName string
+	isUsb    bool
 	adbConn  io.ReadWriteCloser
 	LocalId  uint32
 }
@@ -161,12 +162,17 @@ func generate_message(command uint32, arg0 uint32, arg1 int32, data []byte) []by
 	return message.Bytes()
 }
 
-func send_message(conn io.ReadWriteCloser, command uint32, arg0 uint32, arg1 int32, data []byte) {
+func (adbClient *AdbClient) send_message(conn io.ReadWriteCloser, command uint32, arg0 uint32, arg1 int32, data []byte) {
 	data_raw := generate_message(command, arg0, arg1, data)
 	if conn != nil {
-		conn.Write(data_raw[:24])
-		if len(data) > 0 {
-			conn.Write(data_raw[24:])
+		if adbClient.isUsb {
+			//usb必须分开发送
+			conn.Write(data_raw[:24])
+			if len(data) > 0 {
+				conn.Write(data_raw[24:])
+			}
+		} else {
+			conn.Write(data_raw)
 		}
 	}
 }
@@ -198,11 +204,10 @@ func generate_sync_message(id []byte, len uint32) []byte {
 }
 
 func (adbClient *AdbClient) Connect(addr string) error {
-	if !fileExists(adbClient.CertFile) || !fileExists(adbClient.KeyFile) {
-		err := generateCert(adbClient.CertFile, adbClient.KeyFile, adbClient.PeerName)
-		if err != nil {
-			return err
-		}
+	adbClient.isUsb = false
+	var err = checkCert(adbClient.CertFile, adbClient.KeyFile, adbClient.PeerName)
+	if err != nil {
+		return err
 	}
 	//如果连接成功，启动接收协程
 	defer func() {
@@ -215,7 +220,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		return err
 	}
 	// Send CNXN first
-	send_message(conn,
+	adbClient.send_message(conn,
 		A_CNXN,
 		A_VERSION,
 		MAX_PAYLOAD,
@@ -232,7 +237,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	//tls auth android 11+
 	if message.command == A_STLS {
 		// Send STLS packet
-		send_message(conn, A_STLS, A_STLS_VERSION, 0, []byte{})
+		adbClient.send_message(conn, A_STLS, A_STLS_VERSION, 0, []byte{})
 
 		certificates, err := tls.LoadX509KeyPair(adbClient.CertFile, adbClient.KeyFile)
 		if err != nil {
@@ -288,14 +293,14 @@ func (adbClient *AdbClient) Connect(addr string) error {
 			return nil
 		}
 
-		send_message(conn, A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
+		adbClient.send_message(conn, A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
 
 		message, _ = message_parse(conn)
 		if message.command == A_AUTH && message.arg0 == ADB_AUTH_TOKEN {
 			publicKeybyte, _ := encodeRSAPublicKey(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
 			pubKeyByte := base64.StdEncoding.EncodeToString(publicKeybyte)
 			pubKeyByte = pubKeyByte + " " + adbClient.PeerName + "\x00"
-			send_message(conn, A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, []byte(pubKeyByte))
+			adbClient.send_message(conn, A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, []byte(pubKeyByte))
 			message, _ = message_parse(conn)
 		}
 		//连接成功
@@ -307,12 +312,20 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	return errors.New("auth error")
 }
 
-func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
-	if !fileExists(adbClient.CertFile) || !fileExists(adbClient.KeyFile) {
-		err := generateCert(adbClient.CertFile, adbClient.KeyFile, adbClient.PeerName)
+func checkCert(certFile string, keyFile string, peerName string) error {
+	if !fileExists(certFile) || !fileExists(keyFile) {
+		err := generateCert(certFile, keyFile, peerName)
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
+	adbClient.isUsb = true
+	var err = checkCert(adbClient.CertFile, adbClient.KeyFile, adbClient.PeerName)
+	if err != nil {
+		return err
 	}
 	//如果连接成功，启动接收协程
 	defer func() {
@@ -322,7 +335,7 @@ func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
 	}()
 
 	// Send CNXN first
-	send_message(conn,
+	adbClient.send_message(conn,
 		A_CNXN,
 		A_VERSION,
 		MAX_PAYLOAD,
@@ -362,13 +375,13 @@ func (adbClient *AdbClient) UsbConnect(conn io.ReadWriteCloser) error {
 			return nil
 		}
 
-		send_message(conn, A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
+		adbClient.send_message(conn, A_AUTH, ADB_AUTH_SIGNATURE, 0, signature)
 		message, _ = message_parse(conn)
 		if message.command == A_AUTH && message.arg0 == ADB_AUTH_TOKEN {
 			publicKeybyte, _ := encodeRSAPublicKey(&certificates.PrivateKey.(*rsa.PrivateKey).PublicKey)
 			pubKeyByte := base64.StdEncoding.EncodeToString(publicKeybyte)
 			pubKeyByte = pubKeyByte + " " + adbClient.PeerName + "\x00"
-			send_message(conn, A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, []byte(pubKeyByte))
+			adbClient.send_message(conn, A_AUTH, ADB_AUTH_RSAPUBLICKEY, 0, []byte(pubKeyByte))
 			message, _ = message_parse(conn)
 		}
 		//连接成功
@@ -486,7 +499,7 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "shell:" + cmd + "\n\x00"
-	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
 
 	// Read OKAY
 	message, err := adbClient.ReadMessage(localId)
@@ -499,7 +512,7 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 	}
 	remoteId := message.arg0
 	defer func() {
-		send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
+		adbClient.send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
 	}()
 	// Read WRTE
 	var out = ""
@@ -513,7 +526,7 @@ func (adbClient *AdbClient) ShellCmd(cmd string, block bool) (string, error) {
 			break
 		}
 		if message.command != A_OKAY {
-			send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
+			adbClient.send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
 		}
 		if message.command != uint32(A_WRTE) || message.data_length == 0 {
 			break
@@ -536,7 +549,7 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "sync:\x00"
-	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
 
 	// Read OKAY
 	message, err := adbClient.ReadMessage(localId)
@@ -550,7 +563,7 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 	}
 	remoteId := int32(message.arg0)
 	list_message := generate_sync_message([]byte("LIST"), uint32(len(path)))
-	send_message(adbClient.adbConn, A_WRTE, localId, remoteId, append(list_message, []byte(path)...))
+	adbClient.send_message(adbClient.adbConn, A_WRTE, localId, remoteId, append(list_message, []byte(path)...))
 
 	//读取okey
 	message, err = adbClient.ReadMessage(localId)
@@ -596,11 +609,11 @@ func (adbClient *AdbClient) Ls(path string) ([]SyncMsgDent, error) {
 
 		}
 		// Send OKAY
-		send_message(adbClient.adbConn, A_OKAY, localId, remoteId, []byte{})
+		adbClient.send_message(adbClient.adbConn, A_OKAY, localId, remoteId, []byte{})
 
 	}
 	//send clse
-	send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
+	adbClient.send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
 	return lists, nil
 }
 
@@ -630,7 +643,7 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	fmt.Printf("PullStream path:%s\r\n", path)
 	// 打开通道
 	var shell_cmd = "sync:\x00"
-	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
 
 	// 读取remoteId
 	message, err := adbClient.ReadMessage(localId)
@@ -643,7 +656,7 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	remoteId := message.arg0
 	//发送 A_write STAT
 	stat_message := generate_sync_message([]byte("STAT"), uint32(len(path)))
-	send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(stat_message, []byte(path)...))
+	adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(stat_message, []byte(path)...))
 
 	//读取okey
 	message, err = adbClient.ReadMessage(localId)
@@ -671,12 +684,12 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	fileStat.time = binary.LittleEndian.Uint32(message.payload[12:16])
 
 	// Send OKAY
-	send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
+	adbClient.send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
 
 	//发送
 	//发送 A_write STAT
 	recv_message := generate_sync_message([]byte("RECV"), uint32(len(path)))
-	send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(recv_message, []byte(path)...))
+	adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(recv_message, []byte(path)...))
 	//read okey
 	message, err = adbClient.ReadMessage(localId)
 	if err != nil {
@@ -697,7 +710,7 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 		}
 		fileBuf = append(fileBuf, message.payload...)
 		// Send OKAY
-		send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
+		adbClient.send_message(adbClient.adbConn, A_OKAY, localId, int32(remoteId), []byte{})
 		for {
 			if len(fileBuf) < 8 {
 				break
@@ -729,13 +742,13 @@ func (adbClient *AdbClient) PullStream(path string, dest io.Writer) (*SyncMsgSta
 	}
 
 	quit_message := generate_sync_message([]byte("QUIT"), 0)
-	send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(quit_message))
+	adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(quit_message))
 
 	//read okey
 	message, err = adbClient.ReadMessage(localId)
 
 	//send clse
-	send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
+	adbClient.send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
 	//read okey
 	adbClient.ReadMessage(localId)
 	return &fileStat, nil
@@ -749,7 +762,7 @@ func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) 
 	defer ChannelMapInstance.DeleteChannel(localId)
 	// 打开通道
 	var shell_cmd = "sync:\x00"
-	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
 
 	// 读取remoteId
 
@@ -766,7 +779,7 @@ func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) 
 	//发送 A_write SEND
 	sendBuf := fmt.Sprintf("%s,%d", remotePath, mode)
 	recv_message := generate_sync_message([]byte("SEND"), uint32(len(sendBuf)))
-	send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(recv_message, []byte(sendBuf)...))
+	adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(recv_message, []byte(sendBuf)...))
 
 	//read okey
 	message, err = adbClient.ReadMessage(localId)
@@ -797,14 +810,14 @@ func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) 
 		}
 		//发送 A_write STAT
 		data_message := generate_sync_message([]byte("DATA"), uint32(n))
-		send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(data_message, buffer[:n]...))
+		adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(data_message, buffer[:n]...))
 
 		adbClient.ReadMessage(localId)
 	}
 
 	//发送 A_write DONE
 	done_message := generate_sync_message([]byte("DONE"), uint32(time.Now().Unix()))
-	send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), done_message)
+	adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), done_message)
 
 	//read okey
 	message, err = adbClient.ReadMessage(localId)
@@ -817,10 +830,10 @@ func (adbClient *AdbClient) Push(localFile string, remotePath string, mode int) 
 
 	//send quit
 	quit_message := generate_sync_message([]byte("QUIT"), 0)
-	send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(quit_message))
+	adbClient.send_message(adbClient.adbConn, A_WRTE, localId, int32(remoteId), append(quit_message))
 
 	//send clse
-	send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
+	adbClient.send_message(adbClient.adbConn, A_CLSE, localId, int32(remoteId), []byte{})
 
 	return nil
 }
@@ -843,7 +856,7 @@ func (adbClient *AdbClient) Reboot() error {
 	defer ChannelMapInstance.DeleteChannel(localId)
 	// Send OPEN
 	var shell_cmd = "reboot:\x00"
-	send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
+	adbClient.send_message(adbClient.adbConn, A_OPEN, localId, 0, []byte(shell_cmd))
 
 	// Read OKAY
 	message, err := adbClient.ReadMessage(localId)
@@ -855,7 +868,7 @@ func (adbClient *AdbClient) Reboot() error {
 		return errors.New("Not OKAY command")
 	}
 	// Send OKAY
-	send_message(adbClient.adbConn, A_OKAY, localId, int32(message.arg0), []byte{})
+	adbClient.send_message(adbClient.adbConn, A_OKAY, localId, int32(message.arg0), []byte{})
 	return nil
 }
 
